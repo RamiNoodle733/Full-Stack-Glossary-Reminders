@@ -1,8 +1,8 @@
+# Full Stack Islamic Glossary Reminders Web App
 
 # https://islamic-glossary-reminders.onrender.com
 
 
-# Full Stack Islamic Glossary Reminders Web App
 
 **Islamic Glossary Reminders** is a web application designed to encourage Muslims to seek knowledge and deepen their understanding of Islam. The app provides users with the opportunity to log in three times a day during specific check-in periods to receive a random word from an Islamic glossary. Each time a user checks in, they earn "knowledge points" that contribute to their ranking on a community leaderboard.
 
