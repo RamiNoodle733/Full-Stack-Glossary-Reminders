@@ -116,74 +116,33 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Fetch and display a random word for the current interval without repetition
+    // Fetch and display the current word from the server - same for all users
     async function fetchRandomWordForInterval() {
         try {
-            // Load the glossary from the external JSON file
-            const response = await fetch('/glossary.json');
-            const glossary = await response.json();
+            // Get the word from the server instead of generating locally
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${baseURL}/word-for-interval`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-access-token': token,
+                },
+            });
 
-            const currentTime = new Date();
-            let currentInterval;
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
 
-            if (currentTime.getHours() >= 4 && currentTime.getHours() < 12) {
-                currentInterval = 'morning';
-            } else if (currentTime.getHours() >= 12 && currentTime.getHours() < 20) {
-                currentInterval = 'afternoon';
+            const data = await response.json();
+            
+            if (data.status === 'ok' && data.word) {
+                document.getElementById('glossary-word').textContent = `${data.word}: ${data.meaning}`;
             } else {
-                currentInterval = 'evening';
+                throw new Error('Failed to get word from server');
             }
-
-            // Check if we're in a new day - clear previous day's selections
-            const lastDayCheck = localStorage.getItem('last_day_check');
-            const today = currentTime.toDateString();
-            
-            if (lastDayCheck !== today) {
-                // It's a new day, clear all interval words
-                localStorage.removeItem('word_morning');
-                localStorage.removeItem('word_afternoon');
-                localStorage.removeItem('word_evening');
-                localStorage.removeItem('used_words');
-                localStorage.setItem('last_day_check', today);
-            }
-
-            // Get list of used words or initialize empty array
-            let usedWords = JSON.parse(localStorage.getItem('used_words') || '[]');
-            
-            // Check if a word has already been selected for this interval today
-            const savedWordKey = localStorage.getItem(`word_${currentInterval}`);
-            let selectedWord;
-            
-            if (savedWordKey) {
-                selectedWord = savedWordKey;
-            } else {
-                // Get all available words
-                const allWords = Object.keys(glossary);
-                
-                // Filter out already used words
-                const availableWords = allWords.filter(word => !usedWords.includes(word));
-                
-                if (availableWords.length === 0) {
-                    // We've used all words, reset the used words tracking
-                    usedWords = [];
-                    selectedWord = allWords[Math.floor(Math.random() * allWords.length)];
-                } else {
-                    // Select a random word from available words
-                    selectedWord = availableWords[Math.floor(Math.random() * availableWords.length)];
-                }
-                
-                // Add the selected word to used words
-                usedWords.push(selectedWord);
-                localStorage.setItem('used_words', JSON.stringify(usedWords));
-                
-                // Save this word for this interval
-                localStorage.setItem(`word_${currentInterval}`, selectedWord);
-            }
-
-            document.getElementById('glossary-word').textContent = `${selectedWord}: ${glossary[selectedWord]}`;
         } catch (error) {
-            console.error('Error fetching glossary:', error);
-            document.getElementById('glossary-word').textContent = 'Error loading glossary. Please try refreshing the page.';
+            console.error('Error fetching word:', error);
+            document.getElementById('glossary-word').textContent = 'Error loading glossary word. Please try refreshing the page.';
         }
     }
 

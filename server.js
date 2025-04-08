@@ -65,9 +65,13 @@ const User = mongoose.model('User', UserSchema);
 
 // Define Word schema and model for storing selected words
 const WordSchema = new mongoose.Schema({
-    interval: { type: String, unique: true }, // 'morning', 'afternoon', 'evening'
-    word: String
+    interval: { type: String, required: true }, // 'morning', 'afternoon', 'evening'
+    date: { type: Date, required: true },
+    word: { type: String, required: true }
 });
+
+// Create a compound index to ensure uniqueness of interval+date combination
+WordSchema.index({ interval: 1, date: 1 }, { unique: true });
 
 const Word = mongoose.model('Word', WordSchema);
 
@@ -169,34 +173,75 @@ app.get('/user-stats', async (req, res) => {
     }
 });
 
-// Fetch or generate word for interval route
+// Fetch or generate word for interval route - Modified to return the same word for all users
 app.get('/word-for-interval', async (req, res) => {
-    const currentTime = new Date();
-    let currentInterval;
+    try {
+        const currentTime = new Date();
+        let currentInterval;
 
-    if (currentTime.getHours() >= 4 && currentTime.getHours() < 12) {
-        currentInterval = 'morning';
-    } else if (currentTime.getHours() >= 12 && currentTime.getHours() < 20) {
-        currentInterval = 'afternoon';
-    } else {
-        currentInterval = 'evening';
-    }
+        if (currentTime.getHours() >= 4 && currentTime.getHours() < 12) {
+            currentInterval = 'morning';
+        } else if (currentTime.getHours() >= 12 && currentTime.getHours() < 20) {
+            currentInterval = 'afternoon';
+        } else {
+            currentInterval = 'evening';
+        }
 
-    let wordForInterval = await Word.findOne({ interval: currentInterval });
-
-    if (!wordForInterval) {
-        const remainingWords = Object.keys(glossary);
-        const randomIndex = Math.floor(Math.random() * remainingWords.length);
-        const selectedWord = remainingWords[randomIndex];
-
-        wordForInterval = new Word({
+        // Get current date without time for consistency
+        const today = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate());
+        
+        // Try to find an existing word for today's interval
+        let wordForInterval = await Word.findOne({
             interval: currentInterval,
-            word: selectedWord
+            date: {
+                $gte: today,
+                $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
+            }
         });
-        await wordForInterval.save();
-    }
 
-    res.json({ status: 'ok', word: wordForInterval.word });
+        // If no word exists for today's interval, create one
+        if (!wordForInterval) {
+            console.log(`Creating new word for ${currentInterval} on ${today}`);
+            const allWords = Object.keys(glossary);
+            
+            // Get recently used words to avoid repetition
+            const recentWords = await Word.find({})
+                .sort({ date: -1 })
+                .limit(allWords.length > 20 ? 20 : Math.floor(allWords.length / 2))
+                .select('word');
+            
+            const recentWordsArray = recentWords.map(w => w.word);
+            
+            // Filter out recently used words
+            const availableWords = allWords.filter(word => !recentWordsArray.includes(word));
+            
+            // If all words have been recently used, just use all words
+            const wordsToChooseFrom = availableWords.length > 0 ? availableWords : allWords;
+            
+            // Select a random word
+            const randomIndex = Math.floor(Math.random() * wordsToChooseFrom.length);
+            const selectedWord = wordsToChooseFrom[randomIndex];
+
+            // Create and save the new word
+            wordForInterval = new Word({
+                interval: currentInterval,
+                date: today,
+                word: selectedWord
+            });
+            
+            await wordForInterval.save();
+            console.log(`Saved new word "${selectedWord}" for ${currentInterval}`);
+        }
+
+        res.json({ 
+            status: 'ok', 
+            word: wordForInterval.word,
+            meaning: glossary[wordForInterval.word] || "Definition not found"
+        });
+    } catch (error) {
+        console.error('Error in word-for-interval:', error);
+        res.status(500).json({ status: 'error', error: 'Failed to retrieve word' });
+    }
 });
 
 // Leaderboard route
