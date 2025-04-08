@@ -3,48 +3,24 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
 require('dotenv').config(); // Load environment variables
-
-// For in-memory MongoDB when testing locally
-const { MongoMemoryServer } = require('mongodb-memory-server');
 
 // Initialize express app
 const app = express();
 app.use(cors({
-    origin: ['https://islamic-glossary-reminders.onrender.com', 'http://localhost:3000', '*'], // Support multiple origins
+    origin: 'https://islamic-glossary-reminders.onrender.com', // Update with your Render URL
     methods: ['GET', 'POST'],
     credentials: true
 }));
 app.use(express.json());
 
-// Connect to MongoDB - either local, Atlas, or in-memory
-async function connectToDatabase() {
-    try {
-        let uri = process.env.MONGO_URI;
-        
-        // If running locally and no external MongoDB is available, use in-memory MongoDB
-        if (!uri.includes('mongodb+srv') && process.env.NODE_ENV !== 'production') {
-            console.log('Starting in-memory MongoDB server for local development');
-            const mongoServer = await MongoMemoryServer.create();
-            uri = mongoServer.getUri();
-            console.log(`In-memory MongoDB running at ${uri}`);
-        }
-
-        await mongoose.connect(uri, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-        });
-        console.log('Connected to MongoDB');
-    } catch (err) {
-        console.error('Could not connect to MongoDB', err);
-        process.exit(1);
-    }
-}
-
-// Connect to database before starting the server
-connectToDatabase();
+// MongoDB connection using environment variable
+mongoose.connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+.then(() => console.log('Connected to MongoDB'))
+.catch(err => console.error('Could not connect to MongoDB', err));
 
 // Define User schema and model
 const UserSchema = new mongoose.Schema({
@@ -70,17 +46,6 @@ const WordSchema = new mongoose.Schema({
 });
 
 const Word = mongoose.model('Word', WordSchema);
-
-// Load glossary from JSON file
-let glossary = {};
-try {
-    const glossaryPath = path.join(__dirname, 'public', 'glossary.json');
-    const glossaryContent = fs.readFileSync(glossaryPath, 'utf8');
-    glossary = JSON.parse(glossaryContent);
-    console.log('Glossary loaded successfully with', Object.keys(glossary).length, 'words');
-} catch (error) {
-    console.error('Error loading glossary:', error);
-}
 
 // Serve the static files from the "public" directory
 app.use(express.static('public'));
@@ -185,6 +150,9 @@ app.get('/word-for-interval', async (req, res) => {
     let wordForInterval = await Word.findOne({ interval: currentInterval });
 
     if (!wordForInterval) {
+        const glossary = {
+            // Load or reference your glossary here
+        };
         const remainingWords = Object.keys(glossary);
         const randomIndex = Math.floor(Math.random() * remainingWords.length);
         const selectedWord = remainingWords[randomIndex];
