@@ -5,17 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Islamic Glossary Reminders</title>
     <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
+    <div id="notification" class="notification"></div>
+    
     <header>
         <h1>ISLAMIC GLOSSARY REMINDERS</h1>
         <nav>
-            <a href="leaderboard.html">Leaderboard</a>
-            <a href="#" id="logout">Logout</a>
+            <a href="leaderboard.html"><i class="fas fa-trophy"></i> Leaderboard</a>
+            <a href="#" id="logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
         </nav>
     </header>
+    
     <main>
-        <!-- Separate styling for login page -->
+        <!-- Login section -->
         <section id="login-section" class="login-container">
             <h2 class="login-title">Login</h2>
             <form id="login-form" class="login-form">
@@ -25,6 +30,8 @@
             </form>
             <p>Don't have an account? <a href="#" id="signup-link">Sign up</a></p>
         </section>
+        
+        <!-- Signup section -->
         <section id="signup-section" class="login-container" style="display: none;">
             <h2 class="login-title">Sign Up</h2>
             <form id="signup-form" class="login-form">
@@ -34,19 +41,47 @@
             </form>
             <p>Already have an account? <a href="#" id="login-link">Login</a></p>
         </section>
+        
+        <!-- Glossary section -->
         <section id="glossary-section" style="display: none;">
             <div class="glossary-box">
-                <div id="glossary-word" class="scroll-box">...</div>
-                <button id="check-in-button">Check In</button>
+                <div id="glossary-word" class="scroll-box">Loading your word...</div>
+                <button id="check-in-button"><i class="fas fa-check-circle"></i> Check In</button>
             </div>
+            
             <div class="stats">
-                <p>KNOWLEDGE POINTS: <span id="total-points">0</span></p>
-                <p>Current Streak: <span id="current-streak">0</span></p>
-                <p>Multiplier: <span id="current-multiplier">1</span></p>
+                <p><i class="fas fa-brain"></i> KNOWLEDGE POINTS: <span id="total-points">0</span></p>
+                <p><i class="fas fa-fire"></i> Current Streak: <span id="current-streak">0</span></p>
+                <p><i class="fas fa-bolt"></i> Multiplier: <span id="current-multiplier">1</span></p>
             </div>
-            <p class="timer">Next Word: <span id="next-word-timer">0:00:00</span></p>
+            
+            <p class="timer"><i class="fas fa-hourglass-half"></i> Next Word: <span id="next-word-timer">0:00:00</span></p>
+            
+            <!-- Word Search -->
+            <div class="search-container">
+                <input type="text" id="search-input" class="search-input" placeholder="Search glossary...">
+                <button id="search-button" class="search-button"><i class="fas fa-search"></i> Search</button>
+                <div id="search-results" class="search-results" style="display: none;"></div>
+            </div>
+            
+            <!-- Word History Section -->
+            <section id="word-history-section" class="word-history-section" style="display: none;">
+                <h3><i class="fas fa-history"></i> Recent Words</h3>
+                <div id="word-history-container">
+                    <p>Loading word history...</p>
+                </div>
+            </section>
+            
+            <!-- Achievements Section -->
+            <section id="achievements-section" class="achievements-section" style="display: none;">
+                <h3><i class="fas fa-award"></i> Your Achievements</h3>
+                <div id="achievements-container" class="achievements-grid">
+                    <!-- Achievement cards will be dynamically added here -->
+                </div>
+            </section>
         </section>
     </main>
+    
     <script src="/script.js"></script>
 </body>
 </html>

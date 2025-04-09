@@ -59,6 +59,15 @@ const UserSchema = new mongoose.Schema({
         afternoon: { type: Date, default: null },
         evening: { type: Date, default: null },
     },
+    achievements: {
+        firstCheckIn: { earned: { type: Boolean, default: false }, date: Date },
+        streakThree: { earned: { type: Boolean, default: false }, date: Date },
+        streakSeven: { earned: { type: Boolean, default: false }, date: Date },
+        streakThirty: { earned: { type: Boolean, default: false }, date: Date },
+        knowledgeSeeker: { earned: { type: Boolean, default: false }, date: Date },
+        knowledgeMaster: { earned: { type: Boolean, default: false }, date: Date },
+        allDayLearner: { earned: { type: Boolean, default: false }, date: Date }
+    }
 });
 
 const User = mongoose.model('User', UserSchema);
@@ -142,17 +151,81 @@ app.post('/update-points', async (req, res) => {
 
         const lastCheckIn = user.lastCheckIn ? new Date(user.lastCheckIn) : null;
         const sameDay = lastCheckIn && lastCheckIn.toDateString() === currentTime.toDateString();
+        const earnedAchievements = [];
 
         if (!user.checkIns[currentInterval] || new Date(user.checkIns[currentInterval]).getDate() !== currentTime.getDate()) {
             user.checkIns[currentInterval] = currentTime;
+            
             if (!sameDay) {
                 user.streak++;
                 user.multiplier = Math.min(15, user.multiplier * 1.2); // Cap multiplier at 15
             }
+            
             user.knowledgePoints += user.multiplier;
             user.lastCheckIn = currentTime;
+            
+            // Check for achievements
+            
+            // First check-in achievement
+            if (!user.achievements.firstCheckIn.earned) {
+                user.achievements.firstCheckIn.earned = true;
+                user.achievements.firstCheckIn.date = currentTime;
+                earnedAchievements.push('First Check-In');
+            }
+            
+            // Streak achievements
+            if (user.streak >= 3 && !user.achievements.streakThree.earned) {
+                user.achievements.streakThree.earned = true;
+                user.achievements.streakThree.date = currentTime;
+                earnedAchievements.push('3-Day Streak');
+            }
+            
+            if (user.streak >= 7 && !user.achievements.streakSeven.earned) {
+                user.achievements.streakSeven.earned = true;
+                user.achievements.streakSeven.date = currentTime;
+                earnedAchievements.push('7-Day Streak');
+            }
+            
+            if (user.streak >= 30 && !user.achievements.streakThirty.earned) {
+                user.achievements.streakThirty.earned = true;
+                user.achievements.streakThirty.date = currentTime;
+                earnedAchievements.push('30-Day Streak');
+            }
+            
+            // Knowledge points achievements
+            if (user.knowledgePoints >= 10 && !user.achievements.knowledgeSeeker.earned) {
+                user.achievements.knowledgeSeeker.earned = true;
+                user.achievements.knowledgeSeeker.date = currentTime;
+                earnedAchievements.push('Knowledge Seeker');
+            }
+            
+            if (user.knowledgePoints >= 50 && !user.achievements.knowledgeMaster.earned) {
+                user.achievements.knowledgeMaster.earned = true;
+                user.achievements.knowledgeMaster.date = currentTime;
+                earnedAchievements.push('Knowledge Master');
+            }
+            
+            // Check if user has checked in for all intervals today
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            
+            const morningToday = user.checkIns.morning && new Date(user.checkIns.morning) >= today && new Date(user.checkIns.morning) < tomorrow;
+            const afternoonToday = user.checkIns.afternoon && new Date(user.checkIns.afternoon) >= today && new Date(user.checkIns.afternoon) < tomorrow;
+            const eveningToday = user.checkIns.evening && new Date(user.checkIns.evening) >= today && new Date(user.checkIns.evening) < tomorrow;
+            
+            if (morningToday && afternoonToday && eveningToday && !user.achievements.allDayLearner.earned) {
+                user.achievements.allDayLearner.earned = true;
+                user.achievements.allDayLearner.date = currentTime;
+                earnedAchievements.push('All-Day Learner');
+                
+                // Bonus points for completing all intervals
+                user.knowledgePoints += 5;
+            }
+            
             await user.save();
-            return res.json({ status: 'ok', points: user.knowledgePoints });
+            return res.json({ status: 'ok', points: user.knowledgePoints, newAchievements: earnedAchievements });
         } else {
             return res.json({ status: 'error', error: 'Already checked in for this interval' });
         }
@@ -280,6 +353,125 @@ app.get('/can-check-in', async (req, res) => {
         }
     } catch (error) {
         return res.json({ status: 'error', error: 'Invalid token' });
+    }
+});
+
+// Search glossary route
+app.get('/search-glossary', async (req, res) => {
+    try {
+        const searchTerm = req.query.term.toLowerCase();
+        if (!searchTerm || searchTerm.length < 2) {
+            return res.json({ status: 'error', error: 'Search term too short' });
+        }
+        
+        const results = {};
+        
+        // Search for terms in the glossary
+        Object.entries(glossary).forEach(([key, value]) => {
+            if (key.toLowerCase().includes(searchTerm) || value.toLowerCase().includes(searchTerm)) {
+                results[key] = value;
+            }
+        });
+        
+        res.json({ status: 'ok', results });
+    } catch (error) {
+        console.error('Error in search:', error);
+        res.status(500).json({ status: 'error', error: 'Search failed' });
+    }
+});
+
+// Word history route
+app.get('/word-history', async (req, res) => {
+    try {
+        const token = req.headers['x-access-token'];
+        if (!token) {
+            return res.status(401).json({ status: 'error', error: 'No token provided' });
+        }
+        
+        const decoded = jwt.verify(token, 'secret123');
+        
+        // Find recent words (last 10)
+        const recentWords = await Word.find({})
+            .sort({ date: -1 })
+            .limit(10)
+            .select('word interval date');
+            
+        const formattedHistory = recentWords.map(entry => ({
+            word: entry.word,
+            meaning: glossary[entry.word] || "Definition not available",
+            interval: entry.interval,
+            date: entry.date
+        }));
+        
+        res.json({ status: 'ok', history: formattedHistory });
+    } catch (error) {
+        console.error('Error fetching word history:', error);
+        res.status(500).json({ status: 'error', error: 'Failed to fetch word history' });
+    }
+});
+
+// Get user achievements
+app.get('/achievements', async (req, res) => {
+    const token = req.headers['x-access-token'];
+    try {
+        const decoded = jwt.verify(token, 'secret123');
+        const user = await User.findOne({ username: decoded.username });
+        
+        const achievements = {
+            firstCheckIn: {
+                name: "First Check-In",
+                description: "Checked in for the first time",
+                icon: "fa-award",
+                earned: user.achievements.firstCheckIn.earned,
+                date: user.achievements.firstCheckIn.date
+            },
+            streakThree: {
+                name: "3-Day Streak",
+                description: "Maintained a 3-day streak",
+                icon: "fa-fire",
+                earned: user.achievements.streakThree.earned,
+                date: user.achievements.streakThree.date
+            },
+            streakSeven: {
+                name: "7-Day Streak",
+                description: "Maintained a 7-day streak",
+                icon: "fa-fire",
+                earned: user.achievements.streakSeven.earned,
+                date: user.achievements.streakSeven.date
+            },
+            streakThirty: {
+                name: "30-Day Streak",
+                description: "Maintained a 30-day streak",
+                icon: "fa-crown",
+                earned: user.achievements.streakThirty.earned,
+                date: user.achievements.streakThirty.date
+            },
+            knowledgeSeeker: {
+                name: "Knowledge Seeker",
+                description: "Earned 10 knowledge points",
+                icon: "fa-book",
+                earned: user.achievements.knowledgeSeeker.earned,
+                date: user.achievements.knowledgeSeeker.date
+            },
+            knowledgeMaster: {
+                name: "Knowledge Master",
+                description: "Earned 50 knowledge points",
+                icon: "fa-graduation-cap",
+                earned: user.achievements.knowledgeMaster.earned,
+                date: user.achievements.knowledgeMaster.date
+            },
+            allDayLearner: {
+                name: "All-Day Learner",
+                description: "Checked in during all three intervals in a single day",
+                icon: "fa-clock",
+                earned: user.achievements.allDayLearner.earned,
+                date: user.achievements.allDayLearner.date
+            }
+        };
+        
+        res.json({ status: 'ok', achievements });
+    } catch (error) {
+        res.json({ status: 'error', error: 'Failed to fetch achievements' });
     }
 });
 
