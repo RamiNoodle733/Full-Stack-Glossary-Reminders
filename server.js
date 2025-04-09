@@ -54,19 +54,13 @@ const UserSchema = new mongoose.Schema({
     streak: { type: Number, default: 0 },
     multiplier: { type: Number, default: 1 },
     lastCheckIn: { type: Date, default: null },
-    checkIns: {
-        morning: { type: Date, default: null },
-        afternoon: { type: Date, default: null },
-        evening: { type: Date, default: null },
-    },
     achievements: {
         firstCheckIn: { earned: { type: Boolean, default: false }, date: Date },
         streakThree: { earned: { type: Boolean, default: false }, date: Date },
         streakSeven: { earned: { type: Boolean, default: false }, date: Date },
         streakThirty: { earned: { type: Boolean, default: false }, date: Date },
         knowledgeSeeker: { earned: { type: Boolean, default: false }, date: Date },
-        knowledgeMaster: { earned: { type: Boolean, default: false }, date: Date },
-        allDayLearner: { earned: { type: Boolean, default: false }, date: Date }
+        knowledgeMaster: { earned: { type: Boolean, default: false }, date: Date }
     }
 });
 
@@ -74,7 +68,7 @@ const User = mongoose.model('User', UserSchema);
 
 // Define Word schema and model for storing selected words
 const WordSchema = new mongoose.Schema({
-    interval: { type: String, required: true }, // 'morning', 'afternoon', 'evening'
+    interval: { type: String, required: true }, // 'daily'
     date: { type: Date, required: true },
     word: { type: String, required: true }
 });
@@ -139,28 +133,16 @@ app.post('/update-points', async (req, res) => {
         const user = await User.findOne({ username });
 
         const currentTime = new Date();
-        let currentInterval;
-
-        if (currentTime.getHours() >= 4 && currentTime.getHours() < 12) {
-            currentInterval = 'morning';
-        } else if (currentTime.getHours() >= 12 && currentTime.getHours() < 20) {
-            currentInterval = 'afternoon';
-        } else {
-            currentInterval = 'evening';
-        }
+        const currentInterval = 'daily';
+        const earnedAchievements = [];
 
         const lastCheckIn = user.lastCheckIn ? new Date(user.lastCheckIn) : null;
         const sameDay = lastCheckIn && lastCheckIn.toDateString() === currentTime.toDateString();
-        const earnedAchievements = [];
 
-        if (!user.checkIns[currentInterval] || new Date(user.checkIns[currentInterval]).getDate() !== currentTime.getDate()) {
-            user.checkIns[currentInterval] = currentTime;
-            
-            if (!sameDay) {
-                user.streak++;
-                user.multiplier = Math.min(15, user.multiplier * 1.2); // Cap multiplier at 15
-            }
-            
+        if (!sameDay) {
+            // Update user data for check-in
+            user.streak++;
+            user.multiplier = Math.min(15, user.multiplier * 1.2); // Cap multiplier at 15
             user.knowledgePoints += user.multiplier;
             user.lastCheckIn = currentTime;
             
@@ -205,29 +187,10 @@ app.post('/update-points', async (req, res) => {
                 earnedAchievements.push('Knowledge Master');
             }
             
-            // Check if user has checked in for all intervals today
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const tomorrow = new Date(today);
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            
-            const morningToday = user.checkIns.morning && new Date(user.checkIns.morning) >= today && new Date(user.checkIns.morning) < tomorrow;
-            const afternoonToday = user.checkIns.afternoon && new Date(user.checkIns.afternoon) >= today && new Date(user.checkIns.afternoon) < tomorrow;
-            const eveningToday = user.checkIns.evening && new Date(user.checkIns.evening) >= today && new Date(user.checkIns.evening) < tomorrow;
-            
-            if (morningToday && afternoonToday && eveningToday && !user.achievements.allDayLearner.earned) {
-                user.achievements.allDayLearner.earned = true;
-                user.achievements.allDayLearner.date = currentTime;
-                earnedAchievements.push('All-Day Learner');
-                
-                // Bonus points for completing all intervals
-                user.knowledgePoints += 5;
-            }
-            
             await user.save();
             return res.json({ status: 'ok', points: user.knowledgePoints, newAchievements: earnedAchievements });
         } else {
-            return res.json({ status: 'error', error: 'Already checked in for this interval' });
+            return res.json({ status: 'error', error: 'Already checked in for this word' });
         }
     } catch (error) {
         return res.json({ status: 'error', error: 'Invalid token' });
@@ -250,15 +213,7 @@ app.get('/user-stats', async (req, res) => {
 app.get('/word-for-interval', async (req, res) => {
     try {
         const currentTime = new Date();
-        let currentInterval;
-
-        if (currentTime.getHours() >= 4 && currentTime.getHours() < 12) {
-            currentInterval = 'morning';
-        } else if (currentTime.getHours() >= 12 && currentTime.getHours() < 20) {
-            currentInterval = 'afternoon';
-        } else {
-            currentInterval = 'evening';
-        }
+        const currentInterval = 'daily'; // Changed to just 'daily' interval
 
         // Get current date without time for consistency
         const today = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate());
@@ -336,20 +291,13 @@ app.get('/can-check-in', async (req, res) => {
         const user = await User.findOne({ username });
 
         const currentTime = new Date();
-        let currentInterval;
-
-        if (currentTime.getHours() >= 4 && currentTime.getHours() < 12) {
-            currentInterval = 'morning';
-        } else if (currentTime.getHours() >= 12 && currentTime.getHours() < 20) {
-            currentInterval = 'afternoon';
-        } else {
-            currentInterval = 'evening';
-        }
-
-        if (!user.checkIns[currentInterval] || new Date(user.checkIns[currentInterval]).getDate() !== currentTime.getDate()) {
+        const today = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate());
+        
+        // Check if user has already checked in today
+        if (!user.lastCheckIn || new Date(user.lastCheckIn).getDate() !== currentTime.getDate()) {
             return res.json({ status: 'ok' });
         } else {
-            return res.json({ status: 'error', error: 'Already checked in for this interval' });
+            return res.json({ status: 'error', error: 'Already checked in for this word' });
         }
     } catch (error) {
         return res.json({ status: 'error', error: 'Invalid token' });
@@ -459,13 +407,6 @@ app.get('/achievements', async (req, res) => {
                 icon: "fa-graduation-cap",
                 earned: user.achievements.knowledgeMaster.earned,
                 date: user.achievements.knowledgeMaster.date
-            },
-            allDayLearner: {
-                name: "All-Day Learner",
-                description: "Checked in during all three intervals in a single day",
-                icon: "fa-clock",
-                earned: user.achievements.allDayLearner.earned,
-                date: user.achievements.allDayLearner.date
             }
         };
         

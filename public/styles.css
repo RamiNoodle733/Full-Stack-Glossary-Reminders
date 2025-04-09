@@ -179,6 +179,7 @@ button.disabled {
     cursor: not-allowed;
     transform: none;
     box-shadow: none;
+    position: relative;
 }
 
 button.disabled:hover::after {
@@ -195,6 +196,7 @@ button.disabled:hover::after {
     z-index: 10;
     box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
     white-space: nowrap;
+    display: block;
 }
 
 .stats {
@@ -245,12 +247,15 @@ button.disabled:hover::after {
     border-radius: 15px;
     padding: 30px;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-    margin-top: 20px;
+    margin: 20px auto;
     max-width: 450px;
     width: 90%;
     position: relative;
     overflow: hidden;
     border: 2px solid var(--gold);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
 .login-container::after {

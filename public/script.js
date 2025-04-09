@@ -454,19 +454,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Start the countdown timer for the next word
     function startCountdown() {
         const nextWordTime = new Date();
-        let interval;
         
-        if (nextWordTime.getHours() >= 4 && nextWordTime.getHours() < 12) {
-            nextWordTime.setHours(12, 0, 0, 0);
-            interval = "afternoon";
-        } else if (nextWordTime.getHours() >= 12 && nextWordTime.getHours() < 20) {
-            nextWordTime.setHours(20, 0, 0, 0);
-            interval = "evening";
-        } else {
-            nextWordTime.setHours(4, 0, 0, 0);
-            nextWordTime.setDate(nextWordTime.getDate() + 1);
-            interval = "morning";
-        }
+        // Setting next word time to tomorrow at midnight (regardless of current time)
+        nextWordTime.setHours(24, 0, 0, 0);
 
         function updateCountdown() {
             const now = new Date();
@@ -477,12 +467,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const seconds = Math.floor((remainingTime % (1000 * 60)) / 1000);
 
             document.getElementById('next-word-timer').innerHTML = 
-                `<i class="fas fa-hourglass-half"></i> Next Word (${interval}): 
+                `<i class="fas fa-hourglass-half"></i> Time until next word: 
                 <span class="countdown">${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}</span>`;
 
             if (remainingTime < 0) {
                 clearInterval(timerInterval);
-                showNotification(`Time for a new ${interval} word!`);
+                showNotification(`It's time for a new word!`);
                 location.reload(); // Reload the page when the time expires to fetch the new word
             }
         }
