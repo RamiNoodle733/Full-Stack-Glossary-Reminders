@@ -17,6 +17,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const searchResults = document.getElementById('search-results');
     const wordHistorySection = document.getElementById('word-history-section');
     const notification = document.getElementById('notification');
+    const aboutLink = document.getElementById('about-link');
+    const aboutModal = document.getElementById('about-modal');
+    const closeAboutButton = document.getElementById('close-about');
 
     // Function to show notification
     function showNotification(message, type = 'success') {
@@ -480,6 +483,23 @@ document.addEventListener('DOMContentLoaded', () => {
         updateCountdown();
         const timerInterval = setInterval(updateCountdown, 1000);
     }
+
+    // About modal functionality
+    aboutLink.addEventListener('click', (event) => {
+        event.preventDefault();
+        aboutModal.style.display = 'flex';
+    });
+
+    closeAboutButton.addEventListener('click', () => {
+        aboutModal.style.display = 'none';
+    });
+
+    // Close modal when clicking outside
+    window.addEventListener('click', (event) => {
+        if (event.target === aboutModal) {
+            aboutModal.style.display = 'none';
+        }
+    });
 
     // Check if user is logged in
     const token = localStorage.getItem('token');
