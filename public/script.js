@@ -12,10 +12,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginSection = document.getElementById('login-section');
     const signupSection = document.getElementById('signup-section');
     const logoutButton = document.getElementById('logout');
-    const searchButton = document.getElementById('search-button');
-    const searchInput = document.getElementById('search-input');
-    const searchResults = document.getElementById('search-results');
-    const wordHistorySection = document.getElementById('word-history-section');
     const notification = document.getElementById('notification');
     const aboutLink = document.getElementById('about-link');
     const aboutModal = document.getElementById('about-modal');
@@ -121,13 +117,11 @@ document.addEventListener('DOMContentLoaded', () => {
         loginSection.style.display = 'none';
         signupSection.style.display = 'none';
         glossarySection.style.display = 'block';
-        wordHistorySection.style.display = 'block';
         fetchUserStats();
         fetchRandomWordForInterval();
-        fetchWordHistory();
         fetchAchievements();
         checkIfCanCheckIn();
-        startCountdown(); // Start the countdown timer
+        startCountdown();
     }
 
     // Fetch and display the user's total knowledge points, streak, and multiplier
@@ -143,22 +137,23 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             const data = await response.json();
             if (data.status === 'ok') {
-                document.getElementById('total-points').textContent = data.points.toFixed(2);
-                document.getElementById('current-streak').textContent = data.streak;
-                document.getElementById('current-multiplier').textContent = data.multiplier.toFixed(2);
-            } else {
-                showNotification('Failed to fetch user stats', 'error');
+                updateStats(data);
             }
         } catch (error) {
             console.error('Error fetching user stats:', error);
-            showNotification('Connection error when fetching stats', 'error');
         }
     }
 
-    // Fetch and display the current word from the server - same for all users
+    // Update stats display
+    function updateStats(data) {
+        document.getElementById('total-points').textContent = data.points.toFixed(1);
+        document.getElementById('current-streak').textContent = data.streak;
+        document.getElementById('current-multiplier').textContent = data.multiplier.toFixed(1);
+    }
+
+    // Fetch and display the current word from the server
     async function fetchRandomWordForInterval() {
         try {
-            // Get the word from the server instead of generating locally
             const token = localStorage.getItem('token');
             const response = await fetch(`${baseURL}/word-for-interval`, {
                 method: 'GET',
@@ -173,101 +168,19 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const data = await response.json();
-            
             if (data.status === 'ok' && data.word) {
                 const glossaryWord = document.getElementById('glossary-word');
-                
-                // Apply fade out and in animation
                 glossaryWord.style.opacity = '0';
-                
                 setTimeout(() => {
                     glossaryWord.textContent = `${data.word}: ${data.meaning}`;
                     glossaryWord.style.opacity = '1';
                 }, 300);
-            } else {
-                throw new Error('Failed to get word from server');
+                checkIfCanCheckIn(); // Check check-in status when new word is loaded
             }
         } catch (error) {
             console.error('Error fetching word:', error);
             document.getElementById('glossary-word').textContent = 'Error loading glossary word. Please try refreshing the page.';
-            showNotification('Error loading glossary word', 'error');
         }
-    }
-
-    // Fetch word history
-    async function fetchWordHistory() {
-        try {
-            const token = localStorage.getItem('token');
-            const response = await fetch(`${baseURL}/word-history`, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-access-token': token,
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const data = await response.json();
-            
-            if (data.status === 'ok' && data.history) {
-                displayWordHistory(data.history);
-            } else {
-                throw new Error('Failed to get word history');
-            }
-        } catch (error) {
-            console.error('Error fetching word history:', error);
-            document.getElementById('word-history-container').innerHTML = 
-                '<p>Error loading word history. Please try refreshing the page.</p>';
-        }
-    }
-
-    // Display word history
-    function displayWordHistory(history) {
-        const container = document.getElementById('word-history-container');
-        if (history.length === 0) {
-            container.innerHTML = '<p>No word history available yet.</p>';
-            return;
-        }
-
-        const historyList = document.createElement('ul');
-        historyList.className = 'history-list';
-        
-        history.forEach(entry => {
-            const date = new Date(entry.date);
-            const formattedDate = date.toLocaleDateString(undefined, { 
-                weekday: 'short',
-                year: 'numeric', 
-                month: 'short', 
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-            
-            const listItem = document.createElement('li');
-            listItem.innerHTML = `
-                <span class="history-word">${entry.word}</span>
-                <span class="history-interval">${entry.interval}</span>
-                <span class="history-date">${formattedDate}</span>
-            `;
-            
-            // Make history item clickable to show definition
-            listItem.addEventListener('click', () => {
-                showWordDefinition(entry.word, entry.meaning);
-            });
-            
-            historyList.appendChild(listItem);
-        });
-        
-        container.innerHTML = '';
-        container.appendChild(historyList);
-    }
-
-    // Show word definition in a modal or popup
-    function showWordDefinition(word, meaning) {
-        showNotification(`${word}: ${meaning}`, 'info');
     }
 
     // Check if the user can check in
@@ -288,19 +201,35 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.status === 'ok') {
                 checkInButton.classList.remove('disabled');
                 checkInButton.disabled = false;
+                checkInButton.innerHTML = '<i class="fas fa-check-circle"></i> Check In';
             } else {
                 checkInButton.classList.add('disabled');
                 checkInButton.disabled = true;
+                checkInButton.innerHTML = '<i class="fas fa-check"></i> Checked In';
+            }
+            
+            // Update stats even when checking check-in status
+            if (data.points !== undefined) {
+                updateStats(data);
             }
         } catch (error) {
             console.error('Error checking if can check in:', error);
-            showNotification('Error checking check-in status', 'error');
         }
     }
 
     // Check-in functionality to update knowledge points
     document.getElementById('check-in-button').addEventListener('click', async () => {
-        if (document.getElementById('check-in-button').classList.contains('disabled')) return;
+        const checkInButton = document.getElementById('check-in-button');
+        
+        if (checkInButton.classList.contains('disabled') || checkInButton.disabled) {
+            return;
+        }
+
+        // Disable button immediately to prevent double clicks
+        checkInButton.classList.add('disabled');
+        checkInButton.disabled = true;
+        const originalButtonText = checkInButton.innerHTML;
+        checkInButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking in...';
 
         const token = localStorage.getItem('token');
         try {
@@ -314,26 +243,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await response.json();
             if (data.status === 'ok') {
-                showNotification('Knowledge points updated! Keep learning!');
+                showNotification(`Knowledge points updated! +${data.pointsEarned} points!`, 'success');
+                checkInButton.innerHTML = '<i class="fas fa-check"></i> Checked In';
                 
-                // Check if any new achievements were earned
+                // Update stats with new values
+                updateStats(data);
+                
                 if (data.newAchievements && data.newAchievements.length > 0) {
                     setTimeout(() => {
                         showNotification(`Achievement Unlocked: ${data.newAchievements.join(', ')}`, 'achievement');
                     }, 1000);
-                    
-                    // Refresh achievements display
                     fetchAchievements();
                 }
-                
-                fetchUserStats(); // Refresh points, streak, and multiplier after check-in
-                checkIfCanCheckIn(); // Check if the button should be disabled
             } else {
-                showNotification('Check-in failed', 'error');
+                // Re-enable button if check-in failed (unless already checked in)
+                if (data.error !== 'Already checked in for this word') {
+                    checkInButton.classList.remove('disabled');
+                    checkInButton.disabled = false;
+                    checkInButton.innerHTML = originalButtonText;
+                }
+                showNotification(data.error || 'Check-in failed', 'error');
+                
+                // Update stats even on error as they might have changed
+                if (data.points !== undefined) {
+                    updateStats(data);
+                }
             }
         } catch (error) {
             console.error('Error during check-in:', error);
             showNotification('Connection error during check-in', 'error');
+            // Re-enable button on connection error
+            checkInButton.classList.remove('disabled');
+            checkInButton.disabled = false;
+            checkInButton.innerHTML = originalButtonText;
         }
     });
 
@@ -388,82 +330,48 @@ document.addEventListener('DOMContentLoaded', () => {
             
             container.appendChild(card);
         });
-    }
-
-    // Search functionality
-    searchButton.addEventListener('click', performSearch);
-    searchInput.addEventListener('keyup', (e) => {
-        if (e.key === 'Enter') {
-            performSearch();
-        }
-    });
-
-    async function performSearch() {
-        const searchTerm = searchInput.value.trim();
-        
-        if (searchTerm.length < 2) {
-            showNotification('Please enter at least 2 characters to search', 'error');
-            return;
-        }
-        
-        try {
-            const response = await fetch(`${baseURL}/search-glossary?term=${encodeURIComponent(searchTerm)}`, {
-                method: 'GET',
-                headers: { 'Content-Type': 'application/json' }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
-            const data = await response.json();
-            displaySearchResults(data);
-        } catch (error) {
-            console.error('Search error:', error);
-            showNotification('Error performing search', 'error');
-        }
-    }
-
-    function displaySearchResults(data) {
-        searchResults.innerHTML = '';
-        searchResults.style.display = 'block';
-        
-        if (data.status === 'error') {
-            searchResults.innerHTML = `<p class="error-message">${data.error}</p>`;
-            return;
-        }
-        
-        const results = data.results;
-        const resultsCount = Object.keys(results).length;
-        
-        if (resultsCount === 0) {
-            searchResults.innerHTML = '<p>No results found.</p>';
-            return;
-        }
-        
-        const resultsList = document.createElement('ul');
-        resultsList.className = 'search-results-list';
-        
-        Object.entries(results).forEach(([term, definition]) => {
-            const listItem = document.createElement('li');
-            listItem.innerHTML = `<strong>${term}:</strong> ${definition}`;
-            resultsList.appendChild(listItem);
-        });
-        
-        searchResults.innerHTML = `<h4>Found ${resultsCount} result(s):</h4>`;
-        searchResults.appendChild(resultsList);
-    }
-
-    // Start the countdown timer for the next word
+    }    // Start the countdown timer for the next word
     function startCountdown() {
-        const nextWordTime = new Date();
-        
-        // Setting next word time to tomorrow at midnight (regardless of current time)
-        nextWordTime.setHours(24, 0, 0, 0);
-
         function updateCountdown() {
             const now = new Date();
+            const utcHour = now.getUTCHours();
+            const cdtHour = (utcHour - 5 + 24) % 24; // Convert to CDT
+            const nextWordTime = new Date(now);
+
+            // Calculate next update time based on current CDT time
+            if (cdtHour >= 20) {
+                // Night period after 8 PM, next is tomorrow 6 AM
+                nextWordTime.setUTCHours(11, 0, 0, 0); // 6 AM CDT tomorrow
+                nextWordTime.setDate(nextWordTime.getDate() + 1);
+            } else if (cdtHour < 6) {
+                // Night period before 6 AM, next is 6 AM today
+                nextWordTime.setUTCHours(11, 0, 0, 0); // 6 AM CDT today
+            } else if (cdtHour < 15) {
+                // Morning period (6 AM - 3 PM), next is 3 PM
+                nextWordTime.setUTCHours(20, 0, 0, 0); // 3 PM CDT
+            } else {
+                // Afternoon period (3 PM - 8 PM), next is 8 PM
+                nextWordTime.setUTCHours(1, 0, 0, 0); // 8 PM CDT
+                nextWordTime.setDate(nextWordTime.getDate() + 1);
+            }
+
             const remainingTime = nextWordTime - now;
+
+            // If it's time for the next word
+            if (remainingTime <= 0) {
+                clearInterval(timerInterval);
+                showNotification("It's time for a new word!");
+                
+                // Reload after a short delay to prevent multiple reloads
+                setTimeout(() => {
+                    fetchRandomWordForInterval().then(() => {
+                        checkIfCanCheckIn();
+                        // Start a new countdown
+                        startCountdown();
+                    });
+                }, 1000);
+                return;
+            }
 
             const hours = Math.floor(remainingTime / (1000 * 60 * 60));
             const minutes = Math.floor((remainingTime % (1000 * 60 * 60)) / (1000 * 60));
@@ -472,12 +380,6 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('next-word-timer').innerHTML = 
                 `<i class="fas fa-hourglass-half"></i> Time until next word: 
                 <span class="countdown">${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}</span>`;
-
-            if (remainingTime < 0) {
-                clearInterval(timerInterval);
-                showNotification(`It's time for a new word!`);
-                location.reload(); // Reload the page when the time expires to fetch the new word
-            }
         }
 
         updateCountdown();

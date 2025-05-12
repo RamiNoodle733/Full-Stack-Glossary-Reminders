@@ -22,10 +22,10 @@ app.use(express.json());
 // Connect to MongoDB - either local, Atlas, or in-memory
 async function connectToDatabase() {
     try {
-        let uri = process.env.MONGO_URI;
+        let uri = process.env.MONGO_URI || 'mongodb://localhost:27017/glossary';
         
-        // If running locally and no external MongoDB is available, use in-memory MongoDB
-        if (!uri.includes('mongodb+srv') && process.env.NODE_ENV !== 'production') {
+        // If no external MongoDB is available, use in-memory MongoDB
+        if (!uri || (!uri.includes('mongodb+srv') && process.env.NODE_ENV !== 'production')) {
             console.log('Starting in-memory MongoDB server for local development');
             const mongoServer = await MongoMemoryServer.create();
             uri = mongoServer.getUri();
@@ -38,7 +38,7 @@ async function connectToDatabase() {
         });
         console.log('Connected to MongoDB');
     } catch (err) {
-        console.error('Could not connect to MongoDB', err);
+        console.error('Could not connect to MongoDB:', err);
         process.exit(1);
     }
 }
@@ -96,6 +96,108 @@ app.get('/', (req, res) => {
     res.sendFile(__dirname + '/public/index.html');
 });
 
+// Helper function to determine the current check-in period
+function getCurrentPeriod() {
+    // Convert current time to CDT (UTC-5)
+    const now = new Date();
+    const utcHour = now.getUTCHours();
+    const cdtHour = (utcHour - 5 + 24) % 24; // Convert to CDT
+
+    // Define check-in periods in CDT
+    if (cdtHour >= 20 || cdtHour < 6) {
+        return 'night'; // 8:00 PM - 6:00 AM
+    } else if (cdtHour >= 6 && cdtHour < 15) {
+        return 'morning'; // 6:00 AM - 3:00 PM
+    } else {
+        return 'afternoon'; // 3:00 PM - 8:00 PM
+    }
+}
+
+// Helper function to get the start and end time of the current period
+function getPeriodTimes(period = getCurrentPeriod()) {
+    const now = new Date();
+    const startTime = new Date(now);
+    const endTime = new Date(now);
+    const utcHour = now.getUTCHours();
+    
+    // Set to current day's respective period times
+    switch (period) {
+        case 'night':
+            if (utcHour < 11) { // Before 6 AM CDT
+                // Night period from previous day
+                startTime.setDate(startTime.getDate() - 1);
+                startTime.setUTCHours(1, 0, 0, 0); // 8 PM CDT previous day
+                endTime.setUTCHours(11, 0, 0, 0); // 6 AM CDT today
+            } else {
+                // Night period starts today
+                startTime.setUTCHours(1, 0, 0, 0); // 8 PM CDT today
+                endTime.setDate(endTime.getDate() + 1);
+                endTime.setUTCHours(11, 0, 0, 0); // 6 AM CDT tomorrow
+            }
+            break;
+        case 'morning':
+            startTime.setUTCHours(11, 0, 0, 0); // 6 AM CDT
+            endTime.setUTCHours(20, 0, 0, 0); // 3 PM CDT
+            break;
+        case 'afternoon':
+            startTime.setUTCHours(20, 0, 0, 0); // 3 PM CDT
+            if (utcHour < 1) {
+                startTime.setDate(startTime.getDate() - 1);
+            }
+            endTime.setUTCHours(1, 0, 0, 0); // 8 PM CDT
+            if (utcHour >= 1) {
+                endTime.setDate(endTime.getDate() + 1);
+            }
+            break;
+    }
+
+    return { startTime, endTime };
+}
+
+// Helper function to check if a word exists for the current period
+async function getWordForCurrentPeriod() {
+    const currentPeriod = getCurrentPeriod();
+    const { startTime, endTime } = getPeriodTimes(currentPeriod);
+    
+    // Try to find an existing word for the current period
+    let existingWord = await Word.findOne({
+        interval: currentPeriod,
+        date: {
+            $gte: startTime,
+            $lte: endTime
+        }
+    });
+
+    if (existingWord) {
+        return existingWord;
+    }
+
+    // If no word exists for the current period, create a new one
+    const allWords = Object.keys(glossary);
+    
+    // Get recently used words
+    const recentWords = await Word.find({})
+        .sort({ date: -1 })
+        .limit(10)
+        .select('word');
+
+    const recentWordsArray = recentWords.map(w => w.word);
+    const availableWords = allWords.filter(word => !recentWordsArray.includes(word));
+    const wordsToChooseFrom = availableWords.length > 0 ? availableWords : allWords;
+    
+    const randomIndex = Math.floor(Math.random() * wordsToChooseFrom.length);
+    const selectedWord = wordsToChooseFrom[randomIndex];
+
+    existingWord = new Word({
+        interval: currentPeriod,
+        date: startTime, // Use period start time for consistency
+        word: selectedWord
+    });
+
+    await existingWord.save();
+    return existingWord;
+}
+
 // Signup route
 app.post('/signup', async (req, res) => {
     const { username, password } = req.body;
@@ -132,68 +234,129 @@ app.post('/update-points', async (req, res) => {
         const username = decoded.username;
         const user = await User.findOne({ username });
 
-        const currentTime = new Date();
-        const currentInterval = 'daily';
-        const earnedAchievements = [];
-
+        const currentPeriod = getCurrentPeriod();
+        const { startTime, endTime } = getPeriodTimes();
         const lastCheckIn = user.lastCheckIn ? new Date(user.lastCheckIn) : null;
-        const sameDay = lastCheckIn && lastCheckIn.toDateString() === currentTime.toDateString();
 
-        if (!sameDay) {
-            // Update user data for check-in
-            user.streak++;
-            user.multiplier = Math.min(15, user.multiplier * 1.2); // Cap multiplier at 15
-            user.knowledgePoints += user.multiplier;
-            user.lastCheckIn = currentTime;
-            
-            // Check for achievements
-            
-            // First check-in achievement
-            if (!user.achievements.firstCheckIn.earned) {
-                user.achievements.firstCheckIn.earned = true;
-                user.achievements.firstCheckIn.date = currentTime;
-                earnedAchievements.push('First Check-In');
+        // Get the current word for this period
+        const currentWord = await Word.findOne({
+            interval: currentPeriod,
+            date: {
+                $gte: startTime,
+                $lt: endTime
             }
-            
-            // Streak achievements
-            if (user.streak >= 3 && !user.achievements.streakThree.earned) {
-                user.achievements.streakThree.earned = true;
-                user.achievements.streakThree.date = currentTime;
-                earnedAchievements.push('3-Day Streak');
-            }
-            
-            if (user.streak >= 7 && !user.achievements.streakSeven.earned) {
-                user.achievements.streakSeven.earned = true;
-                user.achievements.streakSeven.date = currentTime;
-                earnedAchievements.push('7-Day Streak');
-            }
-            
-            if (user.streak >= 30 && !user.achievements.streakThirty.earned) {
-                user.achievements.streakThirty.earned = true;
-                user.achievements.streakThirty.date = currentTime;
-                earnedAchievements.push('30-Day Streak');
-            }
-            
-            // Knowledge points achievements
-            if (user.knowledgePoints >= 10 && !user.achievements.knowledgeSeeker.earned) {
-                user.achievements.knowledgeSeeker.earned = true;
-                user.achievements.knowledgeSeeker.date = currentTime;
-                earnedAchievements.push('Knowledge Seeker');
-            }
-            
-            if (user.knowledgePoints >= 50 && !user.achievements.knowledgeMaster.earned) {
-                user.achievements.knowledgeMaster.earned = true;
-                user.achievements.knowledgeMaster.date = currentTime;
-                earnedAchievements.push('Knowledge Master');
-            }
-            
-            await user.save();
-            return res.json({ status: 'ok', points: user.knowledgePoints, newAchievements: earnedAchievements });
-        } else {
-            return res.json({ status: 'error', error: 'Already checked in for this word' });
+        });
+
+        if (!currentWord) {
+            return res.json({ 
+                status: 'error', 
+                error: 'No word available for current period',
+                points: user.knowledgePoints,
+                streak: user.streak,
+                multiplier: user.multiplier
+            });
         }
+
+        // Check if already checked in for this period
+        if (lastCheckIn && lastCheckIn >= startTime && lastCheckIn < endTime) {
+            return res.json({ 
+                status: 'error', 
+                error: 'Already checked in for this period',
+                points: user.knowledgePoints,
+                streak: user.streak,
+                multiplier: user.multiplier
+            });
+        }
+
+        // Handle streak and multiplier logic
+        if (!lastCheckIn) {
+            // First check-in ever
+            user.streak = 1;
+            user.multiplier = 1;
+        } else {
+            // Get the previous period's start time
+            const prevPeriodEnd = startTime;
+            const prevPeriodStart = new Date(prevPeriodEnd);
+            switch (currentPeriod) {
+                case 'night':
+                    prevPeriodStart.setHours(prevPeriodStart.getHours() - 5); // 3PM - 8PM
+                    break;
+                case 'morning':
+                    prevPeriodStart.setHours(prevPeriodStart.getHours() - 10); // 8PM - 6AM
+                    break;
+                case 'afternoon':
+                    prevPeriodStart.setHours(prevPeriodStart.getHours() - 9); // 6AM - 3PM
+                    break;
+            }
+
+            // Check if they checked in during the previous period
+            if (lastCheckIn >= prevPeriodStart && lastCheckIn < prevPeriodEnd) {
+                // Checked in during previous period - increment streak
+                user.streak++;
+                user.multiplier = Math.min(15, Math.round(user.multiplier * 1.2 * 1000) / 1000);
+            } else {
+                // Missed the previous period - reset streak
+                user.streak = 1;
+                user.multiplier = 1;
+            }
+        }
+
+        // Calculate and update points
+        const pointsEarned = Math.round(user.multiplier * 1000) / 1000;
+        user.knowledgePoints = Math.round((user.knowledgePoints + pointsEarned) * 1000) / 1000;
+        user.lastCheckIn = new Date();
+
+        // Achievement checking logic
+        const earnedAchievements = [];
+        
+        if (!user.achievements.firstCheckIn.earned) {
+            user.achievements.firstCheckIn.earned = true;
+            user.achievements.firstCheckIn.date = new Date();
+            earnedAchievements.push('First Check-In');
+        }
+        
+        if (user.streak >= 3 && !user.achievements.streakThree.earned) {
+            user.achievements.streakThree.earned = true;
+            user.achievements.streakThree.date = new Date();
+            earnedAchievements.push('3-Day Streak');
+        }
+        
+        if (user.streak >= 7 && !user.achievements.streakSeven.earned) {
+            user.achievements.streakSeven.earned = true;
+            user.achievements.streakSeven.date = new Date();
+            earnedAchievements.push('7-Day Streak');
+        }
+        
+        if (user.streak >= 30 && !user.achievements.streakThirty.earned) {
+            user.achievements.streakThirty.earned = true;
+            user.achievements.streakThirty.date = new Date();
+            earnedAchievements.push('30-Day Streak');
+        }
+        
+        if (user.knowledgePoints >= 10 && !user.achievements.knowledgeSeeker.earned) {
+            user.achievements.knowledgeSeeker.earned = true;
+            user.achievements.knowledgeSeeker.date = new Date();
+            earnedAchievements.push('Taalib \'Ilm (طالب العلم)');
+        }
+        
+        if (user.knowledgePoints >= 50 && !user.achievements.knowledgeMaster.earned) {
+            user.achievements.knowledgeMaster.earned = true;
+            user.achievements.knowledgeMaster.date = new Date();
+            earnedAchievements.push('\'Aalim (عالم)');
+        }
+
+        await user.save();
+        return res.json({ 
+            status: 'ok', 
+            points: user.knowledgePoints,
+            streak: user.streak,
+            multiplier: user.multiplier,
+            pointsEarned,
+            newAchievements: earnedAchievements
+        });
     } catch (error) {
-        return res.json({ status: 'error', error: 'Invalid token' });
+        console.error('Error in update-points:', error);
+        return res.json({ status: 'error', error: 'Failed to update points' });
     }
 });
 
@@ -209,62 +372,17 @@ app.get('/user-stats', async (req, res) => {
     }
 });
 
-// Fetch or generate word for interval route - Modified to return the same word for all users
+// Fetch or generate word for interval route
 app.get('/word-for-interval', async (req, res) => {
     try {
-        const currentTime = new Date();
-        const currentInterval = 'daily'; // Changed to just 'daily' interval
-
-        // Get current date without time for consistency
-        const today = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate());
+        const wordForInterval = await getWordForCurrentPeriod();
         
-        // Try to find an existing word for today's interval
-        let wordForInterval = await Word.findOne({
-            interval: currentInterval,
-            date: {
-                $gte: today,
-                $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
-            }
-        });
-
-        // If no word exists for today's interval, create one
-        if (!wordForInterval) {
-            console.log(`Creating new word for ${currentInterval} on ${today}`);
-            const allWords = Object.keys(glossary);
-            
-            // Get recently used words to avoid repetition
-            const recentWords = await Word.find({})
-                .sort({ date: -1 })
-                .limit(allWords.length > 20 ? 20 : Math.floor(allWords.length / 2))
-                .select('word');
-            
-            const recentWordsArray = recentWords.map(w => w.word);
-            
-            // Filter out recently used words
-            const availableWords = allWords.filter(word => !recentWordsArray.includes(word));
-            
-            // If all words have been recently used, just use all words
-            const wordsToChooseFrom = availableWords.length > 0 ? availableWords : allWords;
-            
-            // Select a random word
-            const randomIndex = Math.floor(Math.random() * wordsToChooseFrom.length);
-            const selectedWord = wordsToChooseFrom[randomIndex];
-
-            // Create and save the new word
-            wordForInterval = new Word({
-                interval: currentInterval,
-                date: today,
-                word: selectedWord
-            });
-            
-            await wordForInterval.save();
-            console.log(`Saved new word "${selectedWord}" for ${currentInterval}`);
-        }
-
         res.json({ 
             status: 'ok', 
             word: wordForInterval.word,
-            meaning: glossary[wordForInterval.word] || "Definition not found"
+            meaning: glossary[wordForInterval.word] || "Definition not found",
+            period: getCurrentPeriod(),
+            nextUpdate: getPeriodTimes().endTime
         });
     } catch (error) {
         console.error('Error in word-for-interval:', error);
@@ -290,41 +408,66 @@ app.get('/can-check-in', async (req, res) => {
         const username = decoded.username;
         const user = await User.findOne({ username });
 
-        const currentTime = new Date();
-        const today = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate());
-        
-        // Check if user has already checked in today
-        if (!user.lastCheckIn || new Date(user.lastCheckIn).getDate() !== currentTime.getDate()) {
-            return res.json({ status: 'ok' });
-        } else {
-            return res.json({ status: 'error', error: 'Already checked in for this word' });
+        if (!user) {
+            return res.json({ 
+                status: 'error', 
+                error: 'User not found',
+                points: 0,
+                streak: 0,
+                multiplier: 1
+            });
         }
-    } catch (error) {
-        return res.json({ status: 'error', error: 'Invalid token' });
-    }
-});
 
-// Search glossary route
-app.get('/search-glossary', async (req, res) => {
-    try {
-        const searchTerm = req.query.term.toLowerCase();
-        if (!searchTerm || searchTerm.length < 2) {
-            return res.json({ status: 'error', error: 'Search term too short' });
+        const currentPeriod = getCurrentPeriod();
+        const { startTime, endTime } = getPeriodTimes(currentPeriod);
+        const lastCheckIn = user.lastCheckIn ? new Date(user.lastCheckIn) : null;
+
+        // Check if user has already checked in for this period
+        if (lastCheckIn && lastCheckIn >= startTime && lastCheckIn <= endTime) {
+            return res.json({ 
+                status: 'error', 
+                error: 'Already checked in for this period',
+                points: user.knowledgePoints,
+                streak: user.streak,
+                multiplier: user.multiplier
+            });
         }
-        
-        const results = {};
-        
-        // Search for terms in the glossary
-        Object.entries(glossary).forEach(([key, value]) => {
-            if (key.toLowerCase().includes(searchTerm) || value.toLowerCase().includes(searchTerm)) {
-                results[key] = value;
+
+        // Get the current word for this period
+        const currentWord = await Word.findOne({
+            interval: currentPeriod,
+            date: {
+                $gte: startTime,
+                $lte: endTime
             }
         });
-        
-        res.json({ status: 'ok', results });
+
+        if (!currentWord) {
+            return res.json({ 
+                status: 'error',
+                error: 'No word available for current period',
+                points: user.knowledgePoints,
+                streak: user.streak,
+                multiplier: user.multiplier
+            });
+        }
+
+        // User can check in
+        return res.json({ 
+            status: 'ok',
+            points: user.knowledgePoints,
+            streak: user.streak,
+            multiplier: user.multiplier
+        });
     } catch (error) {
-        console.error('Error in search:', error);
-        res.status(500).json({ status: 'error', error: 'Search failed' });
+        console.error('Error in can-check-in:', error);
+        return res.json({ 
+            status: 'error', 
+            error: 'Invalid token',
+            points: 0,
+            streak: 0,
+            multiplier: 1
+        });
     }
 });
 
@@ -395,14 +538,14 @@ app.get('/achievements', async (req, res) => {
                 date: user.achievements.streakThirty.date
             },
             knowledgeSeeker: {
-                name: "Knowledge Seeker",
+                name: "Taalib 'Ilm (طالب العلم)",
                 description: "Earned 10 knowledge points",
                 icon: "fa-book",
                 earned: user.achievements.knowledgeSeeker.earned,
                 date: user.achievements.knowledgeSeeker.date
             },
             knowledgeMaster: {
-                name: "Knowledge Master",
+                name: "'Aalim (عالم)",
                 description: "Earned 50 knowledge points",
                 icon: "fa-graduation-cap",
                 earned: user.achievements.knowledgeMaster.earned,
