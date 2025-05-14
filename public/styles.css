@@ -97,8 +97,8 @@ main {
     border: 2px solid var(--gold);
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
     margin: 20px auto;
-    width: 80%;
-    max-width: 600px;
+    width: 90%;
+    max-width: 700px;
     text-align: center;
     transform: translateY(0);
     transition: transform 0.3s ease, box-shadow 0.3s ease;
@@ -124,7 +124,7 @@ main {
 }
 
 .scroll-box {
-    max-height: 200px;
+    max-height: 400px;
     overflow-y: auto;
     padding: 25px 20px;
     background-color: rgba(5, 50, 34, 0.9);
@@ -133,11 +133,87 @@ main {
     margin-bottom: 20px;
     color: #ffffff;
     font-weight: bold;
-    font-size: 1.8em;
     box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
     position: relative;
     transition: all 0.3s ease;
     transition: opacity 0.3s ease;
+}
+
+.word-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 0;
+    border-bottom: 2px solid var(--gold);
+    margin-bottom: 15px;
+    position: relative;
+}
+
+.word-container::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+.english-word {
+    font-size: 1.8em;
+    text-align: left;
+    color: var(--light-text);
+    font-weight: bold;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    flex: 1;
+    padding-right: 15px;
+}
+
+.arabic-word {
+    font-size: 2.2em;
+    font-family: 'Noto Naskh Arabic', 'Amiri', serif;
+    text-align: right;
+    color: var(--gold);
+    font-weight: bold;
+    direction: rtl;
+    flex: 1;
+    padding-left: 15px;
+    border-left: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.definition-container {
+    padding: 15px 10px;
+    text-align: left;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 10px;
+    margin-top: 15px;
+    position: relative;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.definition-container::before {
+    content: 'Definition';
+    position: absolute;
+    top: -10px;
+    left: 15px;
+    background-color: var(--primary-green);
+    padding: 0 10px;
+    font-size: 0.9em;
+    color: var(--gold);
+    border-radius: 4px;
+}
+
+.definition {
+    font-size: 1.2em;
+    line-height: 1.5;
+    font-weight: normal;
+    margin: 5px 0;
 }
 
 .scroll-box::-webkit-scrollbar {

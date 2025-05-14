@@ -375,12 +375,27 @@ app.get('/user-stats', async (req, res) => {
 // Fetch or generate word for interval route
 app.get('/word-for-interval', async (req, res) => {
     try {
-        const wordForInterval = await getWordForCurrentPeriod();
+        const wordForInterval = await getWordForCurrentPeriod();        // Handle different possible formats of the glossary data
+        let meaning = "Definition not found";
+        let arabic = "";
+        
+        const wordData = glossary[wordForInterval.word];
+        if (wordData) {
+            if (typeof wordData === 'string') {
+                // Handle old format where wordData is just the definition string
+                meaning = wordData;
+            } else if (typeof wordData === 'object') {
+                // Handle new format where wordData is an object with definition and arabic
+                meaning = wordData.definition || "Definition not found";
+                arabic = wordData.arabic || "";
+            }
+        }
         
         res.json({ 
             status: 'ok', 
             word: wordForInterval.word,
-            meaning: glossary[wordForInterval.word] || "Definition not found",
+            meaning: meaning,
+            arabic: arabic,
             period: getCurrentPeriod(),
             nextUpdate: getPeriodTimes().endTime
         });

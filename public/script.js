@@ -168,11 +168,17 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const data = await response.json();
-            if (data.status === 'ok' && data.word) {
-                const glossaryWord = document.getElementById('glossary-word');
+            if (data.status === 'ok' && data.word) {                const glossaryWord = document.getElementById('glossary-word');
                 glossaryWord.style.opacity = '0';
-                setTimeout(() => {
-                    glossaryWord.textContent = `${data.word}: ${data.meaning}`;
+                setTimeout(() => {                glossaryWord.innerHTML = `
+                        <div class="word-container">
+                            <span class="english-word">${data.word}</span>
+                            <span class="arabic-word">${data.arabic || ''}</span>
+                        </div>
+                        <div class="definition-container">
+                            <p class="definition">${data.meaning}</p>
+                        </div>
+                    `;
                     glossaryWord.style.opacity = '1';
                 }, 300);
                 checkIfCanCheckIn(); // Check check-in status when new word is loaded
