@@ -156,46 +156,86 @@ function getPeriodTimes(period = getCurrentPeriod()) {
 
 // Helper function to check if a word exists for the current period
 async function getWordForCurrentPeriod() {
-    const currentPeriod = getCurrentPeriod();
-    const { startTime, endTime } = getPeriodTimes(currentPeriod);
-    
-    // Try to find an existing word for the current period
-    let existingWord = await Word.findOne({
-        interval: currentPeriod,
-        date: {
-            $gte: startTime,
-            $lte: endTime
+    try {
+        const currentPeriod = getCurrentPeriod();
+        const { startTime, endTime } = getPeriodTimes(currentPeriod);
+        
+        console.log(`Looking for word in period: ${currentPeriod}, start: ${startTime}, end: ${endTime}`);
+        
+        // Try to find an existing word for the current period
+        let existingWord = await Word.findOne({
+            interval: currentPeriod,
+            date: {
+                $gte: startTime,
+                $lte: endTime
+            }
+        });
+
+        if (existingWord) {
+            console.log(`Found existing word for ${currentPeriod}: ${existingWord.word}`);
+            return existingWord;
         }
-    });
 
-    if (existingWord) {
-        return existingWord;
+        console.log(`No word found for current period (${currentPeriod}), creating a new one...`);
+
+        // If no word exists for the current period, create a new one
+        const allWords = Object.keys(glossary);
+        if (allWords.length === 0) {
+            throw new Error('Glossary is empty');
+        }
+        
+        // Get recently used words
+        const recentWords = await Word.find({})
+            .sort({ date: -1 })
+            .limit(10)
+            .select('word');
+
+        const recentWordsArray = recentWords.map(w => w.word);
+        const availableWords = allWords.filter(word => !recentWordsArray.includes(word));
+        const wordsToChooseFrom = availableWords.length > 0 ? availableWords : allWords;
+        
+        const randomIndex = Math.floor(Math.random() * wordsToChooseFrom.length);
+        const selectedWord = wordsToChooseFrom[randomIndex];
+
+        // Create and save the new word
+        const newWord = new Word({
+            interval: currentPeriod,
+            date: startTime, // Use period start time for consistency
+            word: selectedWord
+        });
+
+        // Use try-catch for saving to handle potential duplicate key errors
+        try {
+            await newWord.save();
+            console.log(`Created new word for ${currentPeriod}: ${selectedWord}`);
+            return newWord;
+        } catch (saveError) {
+            console.error(`Error saving new word: ${saveError.message}`);
+            
+            // If we get a duplicate key error, try one more time to find an existing word
+            // This handles race conditions where another request created a word between our check and save
+            if (saveError.code === 11000) { // MongoDB duplicate key error code
+                console.log('Duplicate key error, checking if word was created by another process');
+                const retryWord = await Word.findOne({
+                    interval: currentPeriod,
+                    date: {
+                        $gte: startTime,
+                        $lte: endTime
+                    }
+                });
+                
+                if (retryWord) {
+                    console.log(`Found word created by another process: ${retryWord.word}`);
+                    return retryWord;
+                }
+            }
+            
+            throw saveError; // Re-throw if it wasn't a duplicate key error or we couldn't find a word
+        }
+    } catch (error) {
+        console.error(`Error in getWordForCurrentPeriod: ${error.message}`);
+        throw error;
     }
-
-    // If no word exists for the current period, create a new one
-    const allWords = Object.keys(glossary);
-    
-    // Get recently used words
-    const recentWords = await Word.find({})
-        .sort({ date: -1 })
-        .limit(10)
-        .select('word');
-
-    const recentWordsArray = recentWords.map(w => w.word);
-    const availableWords = allWords.filter(word => !recentWordsArray.includes(word));
-    const wordsToChooseFrom = availableWords.length > 0 ? availableWords : allWords;
-    
-    const randomIndex = Math.floor(Math.random() * wordsToChooseFrom.length);
-    const selectedWord = wordsToChooseFrom[randomIndex];
-
-    existingWord = new Word({
-        interval: currentPeriod,
-        date: startTime, // Use period start time for consistency
-        word: selectedWord
-    });
-
-    await existingWord.save();
-    return existingWord;
 }
 
 // Signup route
@@ -375,7 +415,25 @@ app.get('/user-stats', async (req, res) => {
 // Fetch or generate word for interval route
 app.get('/word-for-interval', async (req, res) => {
     try {
-        const wordForInterval = await getWordForCurrentPeriod();        // Handle different possible formats of the glossary data
+        // Verify token first
+        const token = req.headers['x-access-token'];
+        if (!token) {
+            return res.status(401).json({ status: 'error', error: 'No token provided' });
+        }
+        
+        try {
+            jwt.verify(token, 'secret123');
+        } catch (tokenError) {
+            return res.status(401).json({ status: 'error', error: 'Invalid token' });
+        }
+        
+        const wordForInterval = await getWordForCurrentPeriod();
+        
+        if (!wordForInterval || !wordForInterval.word) {
+            return res.status(404).json({ status: 'error', error: 'No word available for current period' });
+        }
+        
+        // Handle different possible formats of the glossary data
         let meaning = "Definition not found";
         let arabic = "";
         
@@ -401,7 +459,7 @@ app.get('/word-for-interval', async (req, res) => {
         });
     } catch (error) {
         console.error('Error in word-for-interval:', error);
-        res.status(500).json({ status: 'error', error: 'Failed to retrieve word' });
+        res.status(500).json({ status: 'error', error: `Failed to retrieve word: ${error.message}` });
     }
 });
 
