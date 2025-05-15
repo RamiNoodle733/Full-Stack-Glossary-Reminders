@@ -271,31 +271,62 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
             `;
         }
-    }
-
-    // Check if the user can check in
+    }    // Check if the user can check in
     async function checkIfCanCheckIn() {
         const token = localStorage.getItem('token');
+        if (!token) {
+            console.log('No token available, skipping check-in status check');
+            return;
+        }
+        
+        const checkInButton = document.getElementById('check-in-button');
+        
         try {
-            const response = await fetch(`${baseURL}/can-check-in`, {
+            // Always check with the server first
+            const cacheBuster = new Date().getTime();
+            const response = await fetch(`${baseURL}/can-check-in?_=${cacheBuster}`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
                     'x-access-token': token,
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
                 },
             });
 
-            const data = await response.json();
-            const checkInButton = document.getElementById('check-in-button');
+            if (!response.ok) {
+                throw new Error(`Server returned ${response.status}`);
+            }
 
-            if (data.status === 'ok') {
-                checkInButton.classList.remove('disabled');
-                checkInButton.disabled = false;
-                checkInButton.innerHTML = '<i class="fas fa-check-circle"></i> Check In';
-            } else {
+            const data = await response.json();
+            console.log('Check-in status response:', data);
+
+            // Clear any stale local storage data
+            localStorage.removeItem('currentPeriod');
+            const storedPeriods = ['morning', 'afternoon', 'night'];
+            storedPeriods.forEach(period => {
+                localStorage.removeItem(`checkedIn_${period}`);
+            });
+
+            if (data.status === 'error' && data.error === 'Already checked in for this period') {
+                // User has already checked in
                 checkInButton.classList.add('disabled');
                 checkInButton.disabled = true;
                 checkInButton.innerHTML = '<i class="fas fa-check"></i> Checked In';
+                console.log('User has already checked in for this period');
+            } else if (data.status === 'ok') {
+                // User can check in
+                checkInButton.classList.remove('disabled');
+                checkInButton.disabled = false;
+                checkInButton.innerHTML = '<i class="fas fa-check-circle"></i> Check In';
+                console.log('User can check in');
+            } else {
+                // Handle other error cases
+                console.error('Check-in status error:', data.error);
+                checkInButton.classList.remove('disabled');
+                checkInButton.disabled = false;
+                checkInButton.innerHTML = '<i class="fas fa-check-circle"></i> Check In';
             }
             
             // Update stats even when checking check-in status
@@ -304,6 +335,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             console.error('Error checking if can check in:', error);
+            // Keep button enabled on error
+            checkInButton.classList.remove('disabled');
+            checkInButton.disabled = false;
+            checkInButton.innerHTML = '<i class="fas fa-check-circle"></i> Check In';
         }
     }
 
@@ -331,9 +366,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
             });
 
-            const data = await response.json();
-            if (data.status === 'ok') {
+            const data = await response.json();            if (data.status === 'ok') {
                 showNotification(`Knowledge points updated! +${data.pointsEarned} points!`, 'success');
+                checkInButton.classList.add('disabled');
+                checkInButton.disabled = true;
                 checkInButton.innerHTML = '<i class="fas fa-check"></i> Checked In';
                 
                 // Update stats with new values

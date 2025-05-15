@@ -285,90 +285,91 @@ function getPeriodTimes(period = getCurrentPeriod()) {
     return { startTime, endTime };
 }
 
-// Helper function to check if a word exists for the current period
+// Helper function to get deterministic word for the current period
 async function getWordForCurrentPeriod() {
     try {
         const currentPeriod = getCurrentPeriod();
         const { startTime, endTime } = getPeriodTimes(currentPeriod);
         
         console.log(`Fetching word for period: ${currentPeriod}, start: ${startTime}, end: ${endTime}`);
-        
-        try {
-            // Try to find an existing word for the current period
-            let existingWord = await Word.findOne({
-                interval: currentPeriod,
-                date: {
-                    $gte: startTime,
-                    $lte: endTime
-                }
-            });
 
-            if (existingWord) {
-                console.log(`Found existing word for current period: ${existingWord.word}`);
-                return existingWord;
+        // First try to find an existing word for this period
+        const existingWord = await Word.findOne({
+            interval: currentPeriod,
+            date: {
+                $gte: startTime,
+                $lte: endTime
             }
-        } catch (dbError) {
-            console.error('Error finding existing word:', dbError.message);
-            // Continue to creating a new word
+        }).sort({ date: 1 }); // Sort by date to ensure consistency
+
+        if (existingWord) {
+            console.log(`Found existing word for current period: ${existingWord.word}`);
+            return existingWord;
         }
 
-        console.log('No existing word found, creating a new one');
-        
-        // If no word exists for the current period, create a new one
+        // If no word exists, create a new one using a deterministic method
         if (!glossary || Object.keys(glossary).length === 0) {
-            console.error('Glossary is empty or not loaded correctly when trying to select a word');
             throw new Error('Glossary data is not available');
         }
-        
-        const allWords = Object.keys(glossary);
-        console.log(`Total words in glossary: ${allWords.length}`);
-        
-        let recentWordsArray = [];
-        try {
-            // Get recently used words
-            const recentWords = await Word.find({})
-                .sort({ date: -1 })
-                .limit(10)
-                .select('word');
 
-            recentWordsArray = recentWords.map(w => w.word);
-            console.log(`Recently used words: ${recentWordsArray.join(', ')}`);
-        } catch (recentWordsError) {
-            console.error('Error getting recent words:', recentWordsError.message);
-            // Continue with an empty array if there's an error
+        // Create a deterministic date seed based on the year, month, day, and period
+        // This ensures all users get the same word for the same period
+        const dateSeed = startTime.getFullYear() * 10000 + 
+                        (startTime.getMonth() + 1) * 100 + // Adding 1 to month since it's 0-based
+                        startTime.getDate() +
+                        (currentPeriod === 'morning' ? 1 : currentPeriod === 'afternoon' ? 2 : 3); // Add period modifier
+
+        // Get all available words and sort them for consistency
+        const allWords = Object.keys(glossary).sort();
+        
+        // Use a deterministic way to select the word based on the date seed
+        const selectedIndex = Math.abs(dateSeed) % allWords.length;
+        const selectedWord = allWords[selectedIndex];
+        
+        console.log(`Selected new word (seed: ${dateSeed}, index: ${selectedIndex}): ${selectedWord}`);
+
+        // Double-check to prevent race conditions
+        const doubleCheck = await Word.findOne({
+            interval: currentPeriod,
+            date: {
+                $gte: startTime,
+                $lte: endTime
+            }
+        }).sort({ date: 1 });
+
+        if (doubleCheck) {
+            console.log(`Another process created the word: ${doubleCheck.word}`);
+            return doubleCheck;
         }
-        
-        // Filter out already used words, or use all words if needed
-        const availableWords = allWords.filter(word => !recentWordsArray.includes(word));
-        const wordsToChooseFrom = availableWords.length > 0 ? availableWords : allWords;
-        
-        if (wordsToChooseFrom.length === 0) {
-            console.error('No words available to choose from');
-            throw new Error('No words available to select');
-        }
-        
-        console.log(`Available words to choose from: ${wordsToChooseFrom.length}`);
-        
-        const randomIndex = Math.floor(Math.random() * wordsToChooseFrom.length);
-        const selectedWord = wordsToChooseFrom[randomIndex];
-        
-        console.log(`Selected new word: ${selectedWord}`);
+
+        // Create and save the new word
+        const newWord = new Word({
+            interval: currentPeriod,
+            date: startTime,
+            word: selectedWord
+        });
 
         try {
-            // Create and save new word
-            const newWord = new Word({
-                interval: currentPeriod,
-                date: startTime, // Use period start time for consistency
-                word: selectedWord
-            });
-
             const savedWord = await newWord.save();
             console.log(`Saved new word to database: ${selectedWord}`);
             return savedWord;
         } catch (saveError) {
-            console.error('Error saving new word:', saveError.message);
+            // Handle unique index violation - another process might have created the word
+            if (saveError.code === 11000) { // Duplicate key error
+                const finalCheck = await Word.findOne({
+                    interval: currentPeriod,
+                    date: {
+                        $gte: startTime,
+                        $lte: endTime
+                    }
+                }).sort({ date: 1 });
+                
+                if (finalCheck) {
+                    return finalCheck;
+                }
+            }
             
-            // If saving fails, just return an in-memory word object
+            // If saving fails for other reasons, return an in-memory word object
             console.log('Returning non-persisted word object as fallback');
             return {
                 interval: currentPeriod,
@@ -378,16 +379,7 @@ async function getWordForCurrentPeriod() {
         }
     } catch (error) {
         console.error('Error in getWordForCurrentPeriod:', error);
-        console.error('Error details:', error.message);
-        console.error('Stack trace:', error.stack);
-        
-        // As a last resort, create a hardcoded default word
-        console.log('Creating hardcoded default word due to error');
-        return {
-            interval: getCurrentPeriod(),
-            date: new Date(),
-            word: "'Abd" // Choose a word that we know exists in the glossary
-        };
+        throw error;
     }
 }
 
@@ -714,7 +706,24 @@ app.get('/leaderboard', async (req, res) => {
 app.get('/can-check-in', async (req, res) => {
     const token = req.headers['x-access-token'];
     try {
-        const decoded = jwt.verify(token, 'secret123');
+        if (!token) {
+            return res.status(401).json({
+                status: 'error',
+                error: 'No token provided'
+            });
+        }
+        
+        let decoded;
+        try {
+            decoded = jwt.verify(token, 'secret123');
+        } catch (tokenError) {
+            console.error('Token verification error:', tokenError.message);
+            return res.status(401).json({
+                status: 'error',
+                error: 'Invalid token'
+            });
+        }
+        
         const username = decoded.username;
         const user = await User.findOne({ username });
 
@@ -732,14 +741,23 @@ app.get('/can-check-in', async (req, res) => {
         const { startTime, endTime } = getPeriodTimes(currentPeriod);
         const lastCheckIn = user.lastCheckIn ? new Date(user.lastCheckIn) : null;
 
+        // Log values for debugging
+        console.log('Check-in status for user:', username);
+        console.log('Current period:', currentPeriod);
+        console.log('Period start time:', startTime);
+        console.log('Period end time:', endTime);
+        console.log('Last check-in time:', lastCheckIn);
+        
         // Check if user has already checked in for this period
         if (lastCheckIn && lastCheckIn >= startTime && lastCheckIn <= endTime) {
+            console.log('User has already checked in for this period');
             return res.json({ 
                 status: 'error', 
                 error: 'Already checked in for this period',
                 points: user.knowledgePoints,
                 streak: user.streak,
-                multiplier: user.multiplier
+                multiplier: user.multiplier,
+                checkedIn: true
             });
         }
 
@@ -753,12 +771,14 @@ app.get('/can-check-in', async (req, res) => {
         });
 
         if (!currentWord) {
+            console.log('No word available for current period');
             return res.json({ 
                 status: 'error',
                 error: 'No word available for current period',
                 points: user.knowledgePoints,
                 streak: user.streak,
-                multiplier: user.multiplier
+                multiplier: user.multiplier,
+                checkedIn: false
             });
         }
 
