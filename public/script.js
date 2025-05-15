@@ -166,29 +166,57 @@ document.addEventListener('DOMContentLoaded', () => {
             return null;
         }
     }
-    
-    // Fetch and display the current word from the server
+      // Fetch and display the current word from the server
     async function fetchRandomWordForInterval() {
+        document.getElementById('glossary-word').innerHTML = `
+            <div class="loading-container">
+                <p>Loading glossary word...</p>
+                <div class="spinner"></div>
+            </div>
+        `;
+        
+        let retryCount = localStorage.getItem('wordRetryCount') || 0;
+        
         try {
             // First check server health
             const healthStatus = await checkServerHealth();
-            if (healthStatus && !healthStatus.glossaryLoaded) {
+            console.log('Health status:', healthStatus);
+            
+            if (!healthStatus) {
+                console.warn('Health check failed or unavailable');
+            } else if (healthStatus && !healthStatus.glossaryLoaded) {
                 throw new Error('Glossary data is not loaded on the server');
             }
             
             const token = localStorage.getItem('token');
-            const response = await fetch(`${baseURL}/word-for-interval`, {
+            
+            // Add a cache-busting parameter to prevent caching issues
+            const cacheBuster = new Date().getTime();
+            
+            console.log('Fetching word from:', `${baseURL}/word-for-interval?_=${cacheBuster}`);
+            
+            const response = await fetch(`${baseURL}/word-for-interval?_=${cacheBuster}`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
                     'x-access-token': token,
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
                 },
             });
 
             if (!response.ok) {
+                // Track retry count
+                retryCount = parseInt(retryCount) + 1;
+                localStorage.setItem('wordRetryCount', retryCount);
+                
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
+            // Reset retry count on success
+            localStorage.setItem('wordRetryCount', 0);
+            
             const data = await response.json();
             console.log('Word fetch response:', data);
             
@@ -200,6 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="word-container">
                             <span class="english-word">${data.word}</span>
                             <span class="arabic-word">${data.arabic || ''}</span>
+                            ${data.fallback ? '<span class="fallback-badge">Fallback Word</span>' : ''}
                         </div>
                         <div class="definition-container">
                             <p class="definition">${data.meaning}</p>
@@ -211,21 +240,34 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 // Handle case where data.status is not ok or there's no word
                 console.error('Invalid word data received:', data);
+                
                 document.getElementById('glossary-word').innerHTML = `
                     <div class="error-container">
                         <p class="error-message">Error loading glossary word.</p>
                         <p class="error-details">${data.error || 'No word available'}</p>
                         <button onclick="fetchRandomWordForInterval()" class="retry-button">Try Again</button>
+                        ${retryCount >= 3 ? '<p class="help-text">Try refreshing the page or logging out and back in.</p>' : ''}
                     </div>
                 `;
             }
         } catch (error) {
             console.error('Error fetching word:', error);
+            
             document.getElementById('glossary-word').innerHTML = `
                 <div class="error-container">
                     <p class="error-message">Error loading glossary word.</p>
                     <p class="error-details">${error.message}</p>
                     <button onclick="fetchRandomWordForInterval()" class="retry-button">Try Again</button>
+                    ${retryCount >= 3 ? 
+                        `<div class="troubleshooting-tips">
+                            <p class="help-text">Troubleshooting Tips:</p>
+                            <ul>
+                                <li>Refresh the page</li>
+                                <li>Clear your browser cache</li>
+                                <li>Log out and log back in</li>
+                                <li>Try again in a few minutes</li>
+                            </ul>
+                        </div>` : ''}
                 </div>
             `;
         }

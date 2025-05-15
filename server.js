@@ -21,53 +21,111 @@ app.use(express.json());
 
 // Connect to MongoDB - either local, Atlas, or in-memory
 async function connectToDatabase() {
-    try {
-        let uri = process.env.MONGO_URI || 'mongodb://localhost:27017/glossary';
-        
-        console.log('Environment:', process.env.NODE_ENV);
-        console.log('MONGO_URI available:', !!process.env.MONGO_URI);
-        
-        // If no external MongoDB is available, use in-memory MongoDB
-        if (!uri || (!uri.includes('mongodb+srv') && process.env.NODE_ENV !== 'production')) {
-            console.log('Starting in-memory MongoDB server for local development');
-            const mongoServer = await MongoMemoryServer.create();
-            uri = mongoServer.getUri();
-            console.log(`In-memory MongoDB running at ${uri}`);
-        } else {
-            console.log('Using external MongoDB instance');
-        }
-
-        await mongoose.connect(uri, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-        });
-        console.log('Connected to MongoDB successfully');
-        
-        // Check if connection actually worked
-        if (mongoose.connection.readyState === 1) {  // 1 = connected
-            console.log('MongoDB connection verified: Connected');
+    let retryCount = 0;
+    const maxRetries = 5;
+    const retryDelay = 3000; // 3 seconds
+    
+    const connectWithRetry = async () => {
+        try {
+            let uri = process.env.MONGO_URI || 'mongodb://localhost:27017/glossary';
             
-            // Test if we can access the collections
-            try {
-                const collections = await mongoose.connection.db.collections();
-                console.log(`Available collections: ${collections.map(c => c.collectionName).join(', ')}`);
-            } catch (collErr) {
-                console.error('Error accessing collections:', collErr.message);
+            console.log('Environment:', process.env.NODE_ENV);
+            console.log('MONGO_URI available:', !!process.env.MONGO_URI);
+            console.log('Connect attempt:', retryCount + 1);
+            
+            // If no external MongoDB is available, use in-memory MongoDB
+            if (!uri || (!uri.includes('mongodb+srv') && process.env.NODE_ENV !== 'production')) {
+                console.log('Starting in-memory MongoDB server for local development');
+                try {
+                    const mongoServer = await MongoMemoryServer.create();
+                    uri = mongoServer.getUri();
+                    console.log(`In-memory MongoDB running at ${uri}`);
+                } catch (memDbErr) {
+                    console.error('Error starting in-memory MongoDB:', memDbErr.message);
+                    uri = 'mongodb://localhost:27017/glossary'; // Fallback to local MongoDB
+                }
+            } else {
+                console.log('Using external MongoDB instance');
             }
-        } else {
-            console.error('MongoDB connection state:', mongoose.connection.readyState);
+
+            // Set connection options
+            const mongooseOptions = {
+                useNewUrlParser: true,
+                useUnifiedTopology: true,
+                serverSelectionTimeoutMS: 5000, // 5 seconds
+                socketTimeoutMS: 45000, // 45 seconds
+                connectTimeoutMS: 10000, // 10 seconds
+                family: 4 // Force IPv4
+            };
+
+            // Close existing connection if any
+            if (mongoose.connection.readyState) {
+                console.log('Closing existing mongoose connection');
+                await mongoose.connection.close();
+            }
+
+            await mongoose.connect(uri, mongooseOptions);
+            console.log('Connected to MongoDB successfully');
+            
+            // Check if connection actually worked
+            if (mongoose.connection.readyState === 1) {  // 1 = connected
+                console.log('MongoDB connection verified: Connected');
+                
+                // Test if we can access the collections
+                try {
+                    const collections = await mongoose.connection.db.collections();
+                    console.log(`Available collections: ${collections.map(c => c.collectionName).join(', ')}`);
+                    
+                    // Setup connection monitoring
+                    mongoose.connection.on('error', (error) => {
+                        console.error('MongoDB connection error:', error);
+                        if (!mongoose.connection.readyState) {
+                            console.log('Connection lost, attempting to reconnect...');
+                            setTimeout(connectWithRetry, retryDelay);
+                        }
+                    });
+                    
+                    mongoose.connection.on('disconnected', () => {
+                        console.log('MongoDB disconnected, attempting to reconnect...');
+                        setTimeout(connectWithRetry, retryDelay);
+                    });
+                    
+                    return true; // Connection successful
+                    
+                } catch (collErr) {
+                    console.error('Error accessing collections:', collErr.message);
+                    throw collErr; // Re-throw to trigger retry
+                }
+            } else {
+                console.error('MongoDB connection state:', mongoose.connection.readyState);
+                throw new Error('MongoDB connection not in connected state');
+            }
+        } catch (err) {
+            console.error('Could not connect to MongoDB. Error details:');
+            console.error('Message:', err.message);
+            console.error('Stack:', err.stack);
+            
+            retryCount++;
+            
+            if (retryCount < maxRetries) {
+                console.log(`Retrying connection in ${retryDelay}ms... (${retryCount}/${maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+                return connectWithRetry(); // Retry connection
+            } else {
+                console.error('Maximum retry attempts reached. Continuing without MongoDB connection');
+                
+                // Don't exit in production, just log the error and try to continue
+                if (process.env.NODE_ENV !== 'production') {
+                    process.exit(1);
+                } else {
+                    console.error('Continuing despite MongoDB connection error in production...');
+                    return false; // Connection failed
+                }
+            }
         }
-    } catch (err) {
-        console.error('Could not connect to MongoDB. Error details:');
-        console.error('Message:', err.message);
-        console.error('Stack:', err.stack);
-        // Don't exit in production, just log the error and try to continue
-        if (process.env.NODE_ENV !== 'production') {
-            process.exit(1);
-        } else {
-            console.error('Continuing despite MongoDB connection error in production...');
-        }
-    }
+    };
+    
+    return connectWithRetry();
 }
 
 // Connect to database before starting the server
@@ -105,28 +163,61 @@ WordSchema.index({ interval: 1, date: 1 }, { unique: true });
 
 const Word = mongoose.model('Word', WordSchema);
 
+// Function to check if a file exists
+function fileExists(filePath) {
+    try {
+        fs.accessSync(filePath, fs.constants.F_OK);
+        return true;
+    } catch (err) {
+        return false;
+    }
+}
+
 // Load glossary from JSON file
 let glossary = {};
-try {
-    const glossaryPath = path.join(__dirname, 'public', 'glossary.json');
-    const glossaryContent = fs.readFileSync(glossaryPath, 'utf8');
-    glossary = JSON.parse(glossaryContent);
-    console.log('Glossary loaded successfully with', Object.keys(glossary).length, 'words');
-} catch (error) {
-    console.error('Error loading glossary:', error);
-    console.error('Error details:', error.message);
-    console.error('Path attempted:', path.join(__dirname, 'public', 'glossary.json'));
-    console.error('Current directory:', __dirname);
-    // If error occurs, try an alternative path that might work in production
+const possiblePaths = [
+    path.join(__dirname, 'public', 'glossary.json'),
+    path.join(process.cwd(), 'public', 'glossary.json'),
+    path.join(__dirname, './public/glossary.json'),
+    './public/glossary.json',
+    '/app/public/glossary.json' // Render-specific path
+];
+
+console.log('Current directory:', __dirname);
+console.log('Process working directory:', process.cwd());
+
+// Check which paths exist
+console.log('Checking possible glossary paths:');
+possiblePaths.forEach(p => {
+    console.log(`- ${p}: ${fileExists(p) ? 'EXISTS' : 'NOT FOUND'}`);
+});
+
+// Try each path until we successfully load the glossary
+for (const glossaryPath of possiblePaths) {
     try {
-        const alternativePath = path.join(process.cwd(), 'public', 'glossary.json');
-        console.log('Attempting alternative path:', alternativePath);
-        const alternativeContent = fs.readFileSync(alternativePath, 'utf8');
-        glossary = JSON.parse(alternativeContent);
-        console.log('Glossary loaded successfully from alternative path with', Object.keys(glossary).length, 'words');
-    } catch (altError) {
-        console.error('Error loading glossary from alternative path:', altError.message);
+        console.log(`Attempting to load glossary from: ${glossaryPath}`);
+        if (!fileExists(glossaryPath)) {
+            console.log(`Path does not exist: ${glossaryPath}`);
+            continue;
+        }
+        
+        const glossaryContent = fs.readFileSync(glossaryPath, 'utf8');
+        const parsed = JSON.parse(glossaryContent);
+        
+        if (parsed && Object.keys(parsed).length > 0) {
+            glossary = parsed;
+            console.log(`Glossary loaded successfully from ${glossaryPath} with ${Object.keys(glossary).length} words`);
+            break; // Successfully loaded, exit the loop
+        } else {
+            console.log(`Glossary loaded from ${glossaryPath} but appears to be empty`);
+        }
+    } catch (error) {
+        console.error(`Error loading glossary from ${glossaryPath}:`, error.message);
     }
+}
+
+if (Object.keys(glossary).length === 0) {
+    console.error('CRITICAL: Failed to load glossary from all possible paths');
 }
 
 // Serve the static files from the "public" directory
@@ -202,18 +293,23 @@ async function getWordForCurrentPeriod() {
         
         console.log(`Fetching word for period: ${currentPeriod}, start: ${startTime}, end: ${endTime}`);
         
-        // Try to find an existing word for the current period
-        let existingWord = await Word.findOne({
-            interval: currentPeriod,
-            date: {
-                $gte: startTime,
-                $lte: endTime
-            }
-        });
+        try {
+            // Try to find an existing word for the current period
+            let existingWord = await Word.findOne({
+                interval: currentPeriod,
+                date: {
+                    $gte: startTime,
+                    $lte: endTime
+                }
+            });
 
-        if (existingWord) {
-            console.log(`Found existing word for current period: ${existingWord.word}`);
-            return existingWord;
+            if (existingWord) {
+                console.log(`Found existing word for current period: ${existingWord.word}`);
+                return existingWord;
+            }
+        } catch (dbError) {
+            console.error('Error finding existing word:', dbError.message);
+            // Continue to creating a new word
         }
 
         console.log('No existing word found, creating a new one');
@@ -227,17 +323,29 @@ async function getWordForCurrentPeriod() {
         const allWords = Object.keys(glossary);
         console.log(`Total words in glossary: ${allWords.length}`);
         
-        // Get recently used words
-        const recentWords = await Word.find({})
-            .sort({ date: -1 })
-            .limit(10)
-            .select('word');
+        let recentWordsArray = [];
+        try {
+            // Get recently used words
+            const recentWords = await Word.find({})
+                .sort({ date: -1 })
+                .limit(10)
+                .select('word');
 
-        const recentWordsArray = recentWords.map(w => w.word);
-        console.log(`Recently used words: ${recentWordsArray.join(', ')}`);
+            recentWordsArray = recentWords.map(w => w.word);
+            console.log(`Recently used words: ${recentWordsArray.join(', ')}`);
+        } catch (recentWordsError) {
+            console.error('Error getting recent words:', recentWordsError.message);
+            // Continue with an empty array if there's an error
+        }
         
+        // Filter out already used words, or use all words if needed
         const availableWords = allWords.filter(word => !recentWordsArray.includes(word));
         const wordsToChooseFrom = availableWords.length > 0 ? availableWords : allWords;
+        
+        if (wordsToChooseFrom.length === 0) {
+            console.error('No words available to choose from');
+            throw new Error('No words available to select');
+        }
         
         console.log(`Available words to choose from: ${wordsToChooseFrom.length}`);
         
@@ -246,19 +354,40 @@ async function getWordForCurrentPeriod() {
         
         console.log(`Selected new word: ${selectedWord}`);
 
-        existingWord = new Word({
-            interval: currentPeriod,
-            date: startTime, // Use period start time for consistency
-            word: selectedWord
-        });
+        try {
+            // Create and save new word
+            const newWord = new Word({
+                interval: currentPeriod,
+                date: startTime, // Use period start time for consistency
+                word: selectedWord
+            });
 
-        await existingWord.save();
-        console.log(`Saved new word to database: ${selectedWord}`);
-        return existingWord;
+            const savedWord = await newWord.save();
+            console.log(`Saved new word to database: ${selectedWord}`);
+            return savedWord;
+        } catch (saveError) {
+            console.error('Error saving new word:', saveError.message);
+            
+            // If saving fails, just return an in-memory word object
+            console.log('Returning non-persisted word object as fallback');
+            return {
+                interval: currentPeriod,
+                date: startTime,
+                word: selectedWord
+            };
+        }
     } catch (error) {
         console.error('Error in getWordForCurrentPeriod:', error);
         console.error('Error details:', error.message);
-        throw error; // Rethrow to be handled by caller
+        console.error('Stack trace:', error.stack);
+        
+        // As a last resort, create a hardcoded default word
+        console.log('Creating hardcoded default word due to error');
+        return {
+            interval: getCurrentPeriod(),
+            date: new Date(),
+            word: "'Abd" // Choose a word that we know exists in the glossary
+        };
     }
 }
 
@@ -442,16 +571,65 @@ app.get('/word-for-interval', async (req, res) => {
         // Check if glossary is loaded properly
         if (!glossary || Object.keys(glossary).length === 0) {
             console.error('Glossary is empty or not loaded correctly');
-            return res.status(500).json({ 
-                status: 'error', 
-                error: 'Glossary data is not available',
-                glossaryLoaded: false,
-                dirName: __dirname,
-                currentDir: process.cwd()
+            
+            // Try to load the glossary again as a last resort
+            try {
+                const emergencyPath = path.join(process.cwd(), 'public', 'glossary.json');
+                if (fileExists(emergencyPath)) {
+                    console.log('Emergency attempt to load glossary');
+                    const content = fs.readFileSync(emergencyPath, 'utf8');
+                    glossary = JSON.parse(content);
+                    console.log(`Glossary loaded in emergency with ${Object.keys(glossary).length} words`);
+                }
+            } catch (emergencyError) {
+                console.error('Emergency glossary load failed:', emergencyError.message);
+            }
+            
+            // If still not loaded, return error
+            if (!glossary || Object.keys(glossary).length === 0) {
+                return res.status(500).json({ 
+                    status: 'error', 
+                    error: 'Glossary data is not available',
+                    glossaryLoaded: false,
+                    dirName: __dirname,
+                    currentDir: process.cwd(),
+                    possiblePaths: [
+                        path.join(__dirname, 'public', 'glossary.json'),
+                        path.join(process.cwd(), 'public', 'glossary.json'),
+                        '/app/public/glossary.json'
+                    ]
+                });
+            }
+        }
+
+        // Ensure MongoDB is connected before proceeding
+        if (mongoose.connection.readyState !== 1) {
+            console.error('MongoDB connection is not ready:', mongoose.connection.readyState);
+            return res.status(500).json({
+                status: 'error',
+                error: 'Database connection is not ready',
+                dbState: mongoose.connection.readyState
             });
         }
 
+        // Check if Word collection exists and is accessible
+        try {
+            const collections = await mongoose.connection.db.listCollections({ name: 'words' }).toArray();
+            if (collections.length === 0) {
+                console.log('Words collection does not exist yet, it will be created automatically');
+            }
+        } catch (dbError) {
+            console.error('Error checking collections:', dbError);
+        }
+
         const wordForInterval = await getWordForCurrentPeriod();
+        
+        if (!wordForInterval || !wordForInterval.word) {
+            return res.status(500).json({
+                status: 'error',
+                error: 'Could not retrieve or create a word for this period'
+            });
+        }
         
         // Log word selection for debugging
         console.log('Selected word for interval:', wordForInterval.word);
@@ -473,6 +651,32 @@ app.get('/word-for-interval', async (req, res) => {
             }
         } else {
             console.error('Word not found in glossary:', wordForInterval.word);
+            // If the chosen word is not in the glossary, select a different word that is in the glossary
+            const availableWords = Object.keys(glossary);
+            if (availableWords.length > 0) {
+                const fallbackWord = availableWords[Math.floor(Math.random() * availableWords.length)];
+                console.log(`Selected fallback word: ${fallbackWord}`);
+                
+                // Update meaning and arabic for fallback word
+                const fallbackData = glossary[fallbackWord];
+                if (typeof fallbackData === 'string') {
+                    meaning = fallbackData;
+                } else if (typeof fallbackData === 'object') {
+                    meaning = fallbackData.definition || "Definition not found";
+                    arabic = fallbackData.arabic || "";
+                }
+                
+                // Return the fallback word instead
+                return res.json({ 
+                    status: 'ok', 
+                    word: fallbackWord,
+                    meaning: meaning,
+                    arabic: arabic,
+                    period: getCurrentPeriod(),
+                    nextUpdate: getPeriodTimes().endTime,
+                    fallback: true
+                });
+            }
         }
         
         res.json({ 
@@ -486,6 +690,7 @@ app.get('/word-for-interval', async (req, res) => {
     } catch (error) {
         console.error('Error in word-for-interval:', error);
         console.error('Error details:', error.message);
+        console.error('Stack trace:', error.stack);
         
         res.status(500).json({ 
             status: 'error', 
