@@ -423,16 +423,32 @@ app.post('/update-points', async (req, res) => {
         const { startTime, endTime } = getPeriodTimes();
         const lastCheckIn = user.lastCheckIn ? new Date(user.lastCheckIn) : null;
 
-        // Get the current word for this period
+        // Get the current word for this period        // Try to find the current word with a more lenient time range
         const currentWord = await Word.findOne({
             interval: currentPeriod,
             date: {
                 $gte: startTime,
-                $lt: endTime
+                $lte: endTime
             }
-        });
+        }).sort({ date: 1 }); // Sort by date to ensure we get the earliest word in the period
 
         if (!currentWord) {
+            console.log('No word found, attempting to generate one');
+            try {
+                const newWord = await getWordForCurrentPeriod();
+                if (newWord) {
+                    return res.json({
+                        status: 'ok',
+                        message: 'New word generated',
+                        points: user.knowledgePoints,
+                        streak: user.streak,
+                        multiplier: user.multiplier
+                    });
+                }
+            } catch (genError) {
+                console.error('Error generating new word:', genError);
+            }
+            
             return res.json({ 
                 status: 'error', 
                 error: 'No word available for current period',
