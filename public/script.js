@@ -149,14 +149,12 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('total-points').textContent = data.points.toFixed(1);
         document.getElementById('current-streak').textContent = data.streak;
         document.getElementById('current-multiplier').textContent = data.multiplier.toFixed(1);
-    }    // Fetch and display the current word from the server
+    }
+
+    // Fetch and display the current word from the server
     async function fetchRandomWordForInterval() {
         try {
             const token = localStorage.getItem('token');
-            if (!token) {
-                throw new Error('User not logged in');
-            }
-            
             const response = await fetch(`${baseURL}/word-for-interval`, {
                 method: 'GET',
                 headers: {
@@ -170,12 +168,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const data = await response.json();
-            if (data.status === 'ok' && data.word) {
-                const glossaryWord = document.getElementById('glossary-word');
+            if (data.status === 'ok' && data.word) {                const glossaryWord = document.getElementById('glossary-word');
                 glossaryWord.style.opacity = '0';
-                
-                setTimeout(() => {
-                    glossaryWord.innerHTML = `
+                setTimeout(() => {                glossaryWord.innerHTML = `
                         <div class="word-container">
                             <span class="english-word">${data.word}</span>
                             <span class="arabic-word">${data.arabic || ''}</span>
@@ -186,21 +181,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     `;
                     glossaryWord.style.opacity = '1';
                 }, 300);
-                
                 checkIfCanCheckIn(); // Check check-in status when new word is loaded
-                return data; // Return the data for promise chaining
-            } else {
-                throw new Error('Invalid response format or missing word');
             }
         } catch (error) {
             console.error('Error fetching word:', error);
-            document.getElementById('glossary-word').innerHTML = `
-                <div class="error-container">
-                    <p class="error-message">Error loading glossary word: ${error.message}</p>
-                    <button onclick="fetchRandomWordForInterval()" class="retry-button">Try Again</button>
-                </div>
-            `;
-            throw error; // Re-throw for promise handling
+            document.getElementById('glossary-word').textContent = 'Error loading glossary word. Please try refreshing the page.';
         }
     }
 
@@ -236,7 +221,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error('Error checking if can check in:', error);
         }
-    }    // Check-in functionality to update knowledge points
+    }
+
+    // Check-in functionality to update knowledge points
     document.getElementById('check-in-button').addEventListener('click', async () => {
         const checkInButton = document.getElementById('check-in-button');
         
@@ -251,15 +238,6 @@ document.addEventListener('DOMContentLoaded', () => {
         checkInButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking in...';
 
         const token = localStorage.getItem('token');
-        if (!token) {
-            showNotification('You are not logged in. Please log in again.', 'error');
-            setTimeout(() => {
-                localStorage.removeItem('token');
-                window.location.reload();
-            }, 2000);
-            return;
-        }
-
         try {
             const response = await fetch(`${baseURL}/update-points`, {
                 method: 'POST',
@@ -268,10 +246,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     'x-access-token': token,
                 },
             });
-
-            if (!response.ok) {
-                throw new Error(`Server returned ${response.status}: ${response.statusText}`);
-            }
 
             const data = await response.json();
             if (data.status === 'ok') {
@@ -289,16 +263,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             } else {
                 // Re-enable button if check-in failed (unless already checked in)
-                if (data.error !== 'Already checked in for this period' && 
-                    data.error !== 'Already checked in for this word') {
+                if (data.error !== 'Already checked in for this word') {
                     checkInButton.classList.remove('disabled');
                     checkInButton.disabled = false;
                     checkInButton.innerHTML = originalButtonText;
-                } else {
-                    // Keep the button disabled and update its appearance
-                    checkInButton.innerHTML = '<i class="fas fa-check"></i> Checked In';
                 }
-                
                 showNotification(data.error || 'Check-in failed', 'error');
                 
                 // Update stats even on error as they might have changed
@@ -308,22 +277,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             console.error('Error during check-in:', error);
-            showNotification(`Connection error: ${error.message}. Please try again later.`, 'error');
+            showNotification('Connection error during check-in', 'error');
             // Re-enable button on connection error
             checkInButton.classList.remove('disabled');
             checkInButton.disabled = false;
             checkInButton.innerHTML = originalButtonText;
-            
-            // If it's a network error, add a retry button
-            if (error.name === 'TypeError' && error.message.includes('network')) {
-                const glossaryWord = document.getElementById('glossary-word');
-                glossaryWord.innerHTML += `
-                    <div class="error-container">
-                        <p class="error-message">Network error. Please check your connection.</p>
-                        <button onclick="fetchRandomWordForInterval()" class="retry-button">Try Again</button>
-                    </div>
-                `;
-            }
         }
     });
 
