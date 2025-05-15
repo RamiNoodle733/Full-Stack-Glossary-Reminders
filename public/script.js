@@ -110,13 +110,15 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Signup error:', error);
             showNotification('Connection error. Please try again.', 'error');
         }
-    });
-
-    // Show the glossary section after login
-    function showGlossarySection() {
+    });    // Show the glossary section after login
+    async function showGlossarySection() {
         loginSection.style.display = 'none';
         signupSection.style.display = 'none';
         glossarySection.style.display = 'block';
+        
+        // Check server health first
+        await checkServerHealth();
+        
         fetchUserStats();
         fetchRandomWordForInterval();
         fetchAchievements();
@@ -149,11 +151,31 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('total-points').textContent = data.points.toFixed(1);
         document.getElementById('current-streak').textContent = data.streak;
         document.getElementById('current-multiplier').textContent = data.multiplier.toFixed(1);
+    }    // Helper function to check server health
+    async function checkServerHealth() {
+        try {
+            const response = await fetch(`${baseURL}/health`);
+            if (!response.ok) {
+                throw new Error(`Health check failed with status: ${response.status}`);
+            }
+            const data = await response.json();
+            console.log('Server health check:', data);
+            return data;
+        } catch (error) {
+            console.error('Health check error:', error);
+            return null;
+        }
     }
-
+    
     // Fetch and display the current word from the server
     async function fetchRandomWordForInterval() {
         try {
+            // First check server health
+            const healthStatus = await checkServerHealth();
+            if (healthStatus && !healthStatus.glossaryLoaded) {
+                throw new Error('Glossary data is not loaded on the server');
+            }
+            
             const token = localStorage.getItem('token');
             const response = await fetch(`${baseURL}/word-for-interval`, {
                 method: 'GET',
@@ -168,9 +190,13 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const data = await response.json();
-            if (data.status === 'ok' && data.word) {                const glossaryWord = document.getElementById('glossary-word');
+            console.log('Word fetch response:', data);
+            
+            if (data.status === 'ok' && data.word) {
+                const glossaryWord = document.getElementById('glossary-word');
                 glossaryWord.style.opacity = '0';
-                setTimeout(() => {                glossaryWord.innerHTML = `
+                setTimeout(() => {
+                    glossaryWord.innerHTML = `
                         <div class="word-container">
                             <span class="english-word">${data.word}</span>
                             <span class="arabic-word">${data.arabic || ''}</span>
@@ -182,10 +208,26 @@ document.addEventListener('DOMContentLoaded', () => {
                     glossaryWord.style.opacity = '1';
                 }, 300);
                 checkIfCanCheckIn(); // Check check-in status when new word is loaded
+            } else {
+                // Handle case where data.status is not ok or there's no word
+                console.error('Invalid word data received:', data);
+                document.getElementById('glossary-word').innerHTML = `
+                    <div class="error-container">
+                        <p class="error-message">Error loading glossary word.</p>
+                        <p class="error-details">${data.error || 'No word available'}</p>
+                        <button onclick="fetchRandomWordForInterval()" class="retry-button">Try Again</button>
+                    </div>
+                `;
             }
         } catch (error) {
             console.error('Error fetching word:', error);
-            document.getElementById('glossary-word').textContent = 'Error loading glossary word. Please try refreshing the page.';
+            document.getElementById('glossary-word').innerHTML = `
+                <div class="error-container">
+                    <p class="error-message">Error loading glossary word.</p>
+                    <p class="error-details">${error.message}</p>
+                    <button onclick="fetchRandomWordForInterval()" class="retry-button">Try Again</button>
+                </div>
+            `;
         }
     }
 

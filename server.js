@@ -24,22 +24,49 @@ async function connectToDatabase() {
     try {
         let uri = process.env.MONGO_URI || 'mongodb://localhost:27017/glossary';
         
+        console.log('Environment:', process.env.NODE_ENV);
+        console.log('MONGO_URI available:', !!process.env.MONGO_URI);
+        
         // If no external MongoDB is available, use in-memory MongoDB
         if (!uri || (!uri.includes('mongodb+srv') && process.env.NODE_ENV !== 'production')) {
             console.log('Starting in-memory MongoDB server for local development');
             const mongoServer = await MongoMemoryServer.create();
             uri = mongoServer.getUri();
             console.log(`In-memory MongoDB running at ${uri}`);
+        } else {
+            console.log('Using external MongoDB instance');
         }
 
         await mongoose.connect(uri, {
             useNewUrlParser: true,
             useUnifiedTopology: true,
         });
-        console.log('Connected to MongoDB');
+        console.log('Connected to MongoDB successfully');
+        
+        // Check if connection actually worked
+        if (mongoose.connection.readyState === 1) {  // 1 = connected
+            console.log('MongoDB connection verified: Connected');
+            
+            // Test if we can access the collections
+            try {
+                const collections = await mongoose.connection.db.collections();
+                console.log(`Available collections: ${collections.map(c => c.collectionName).join(', ')}`);
+            } catch (collErr) {
+                console.error('Error accessing collections:', collErr.message);
+            }
+        } else {
+            console.error('MongoDB connection state:', mongoose.connection.readyState);
+        }
     } catch (err) {
-        console.error('Could not connect to MongoDB:', err);
-        process.exit(1);
+        console.error('Could not connect to MongoDB. Error details:');
+        console.error('Message:', err.message);
+        console.error('Stack:', err.stack);
+        // Don't exit in production, just log the error and try to continue
+        if (process.env.NODE_ENV !== 'production') {
+            process.exit(1);
+        } else {
+            console.error('Continuing despite MongoDB connection error in production...');
+        }
     }
 }
 
@@ -87,6 +114,19 @@ try {
     console.log('Glossary loaded successfully with', Object.keys(glossary).length, 'words');
 } catch (error) {
     console.error('Error loading glossary:', error);
+    console.error('Error details:', error.message);
+    console.error('Path attempted:', path.join(__dirname, 'public', 'glossary.json'));
+    console.error('Current directory:', __dirname);
+    // If error occurs, try an alternative path that might work in production
+    try {
+        const alternativePath = path.join(process.cwd(), 'public', 'glossary.json');
+        console.log('Attempting alternative path:', alternativePath);
+        const alternativeContent = fs.readFileSync(alternativePath, 'utf8');
+        glossary = JSON.parse(alternativeContent);
+        console.log('Glossary loaded successfully from alternative path with', Object.keys(glossary).length, 'words');
+    } catch (altError) {
+        console.error('Error loading glossary from alternative path:', altError.message);
+    }
 }
 
 // Serve the static files from the "public" directory
@@ -156,46 +196,70 @@ function getPeriodTimes(period = getCurrentPeriod()) {
 
 // Helper function to check if a word exists for the current period
 async function getWordForCurrentPeriod() {
-    const currentPeriod = getCurrentPeriod();
-    const { startTime, endTime } = getPeriodTimes(currentPeriod);
-    
-    // Try to find an existing word for the current period
-    let existingWord = await Word.findOne({
-        interval: currentPeriod,
-        date: {
-            $gte: startTime,
-            $lte: endTime
+    try {
+        const currentPeriod = getCurrentPeriod();
+        const { startTime, endTime } = getPeriodTimes(currentPeriod);
+        
+        console.log(`Fetching word for period: ${currentPeriod}, start: ${startTime}, end: ${endTime}`);
+        
+        // Try to find an existing word for the current period
+        let existingWord = await Word.findOne({
+            interval: currentPeriod,
+            date: {
+                $gte: startTime,
+                $lte: endTime
+            }
+        });
+
+        if (existingWord) {
+            console.log(`Found existing word for current period: ${existingWord.word}`);
+            return existingWord;
         }
-    });
 
-    if (existingWord) {
+        console.log('No existing word found, creating a new one');
+        
+        // If no word exists for the current period, create a new one
+        if (!glossary || Object.keys(glossary).length === 0) {
+            console.error('Glossary is empty or not loaded correctly when trying to select a word');
+            throw new Error('Glossary data is not available');
+        }
+        
+        const allWords = Object.keys(glossary);
+        console.log(`Total words in glossary: ${allWords.length}`);
+        
+        // Get recently used words
+        const recentWords = await Word.find({})
+            .sort({ date: -1 })
+            .limit(10)
+            .select('word');
+
+        const recentWordsArray = recentWords.map(w => w.word);
+        console.log(`Recently used words: ${recentWordsArray.join(', ')}`);
+        
+        const availableWords = allWords.filter(word => !recentWordsArray.includes(word));
+        const wordsToChooseFrom = availableWords.length > 0 ? availableWords : allWords;
+        
+        console.log(`Available words to choose from: ${wordsToChooseFrom.length}`);
+        
+        const randomIndex = Math.floor(Math.random() * wordsToChooseFrom.length);
+        const selectedWord = wordsToChooseFrom[randomIndex];
+        
+        console.log(`Selected new word: ${selectedWord}`);
+
+        existingWord = new Word({
+            interval: currentPeriod,
+            date: startTime, // Use period start time for consistency
+            word: selectedWord
+        });
+
+        await existingWord.save();
+        console.log(`Saved new word to database: ${selectedWord}`);
         return existingWord;
+    } catch (error) {
+        console.error('Error in getWordForCurrentPeriod:', error);
+        console.error('Error details:', error.message);
+        throw error; // Rethrow to be handled by caller
     }
-
-    // If no word exists for the current period, create a new one
-    const allWords = Object.keys(glossary);
-    
-    // Get recently used words
-    const recentWords = await Word.find({})
-        .sort({ date: -1 })
-        .limit(10)
-        .select('word');
-
-    const recentWordsArray = recentWords.map(w => w.word);
-    const availableWords = allWords.filter(word => !recentWordsArray.includes(word));
-    const wordsToChooseFrom = availableWords.length > 0 ? availableWords : allWords;
-    
-    const randomIndex = Math.floor(Math.random() * wordsToChooseFrom.length);
-    const selectedWord = wordsToChooseFrom[randomIndex];
-
-    existingWord = new Word({
-        interval: currentPeriod,
-        date: startTime, // Use period start time for consistency
-        word: selectedWord
-    });
-
-    await existingWord.save();
-    return existingWord;
 }
 
 // Signup route
@@ -375,12 +439,30 @@ app.get('/user-stats', async (req, res) => {
 // Fetch or generate word for interval route
 app.get('/word-for-interval', async (req, res) => {
     try {
-        const wordForInterval = await getWordForCurrentPeriod();        // Handle different possible formats of the glossary data
+        // Check if glossary is loaded properly
+        if (!glossary || Object.keys(glossary).length === 0) {
+            console.error('Glossary is empty or not loaded correctly');
+            return res.status(500).json({ 
+                status: 'error', 
+                error: 'Glossary data is not available',
+                glossaryLoaded: false,
+                dirName: __dirname,
+                currentDir: process.cwd()
+            });
+        }
+
+        const wordForInterval = await getWordForCurrentPeriod();
+        
+        // Log word selection for debugging
+        console.log('Selected word for interval:', wordForInterval.word);
+        
+        // Handle different possible formats of the glossary data
         let meaning = "Definition not found";
         let arabic = "";
         
         const wordData = glossary[wordForInterval.word];
         if (wordData) {
+            console.log('Word data found in glossary');
             if (typeof wordData === 'string') {
                 // Handle old format where wordData is just the definition string
                 meaning = wordData;
@@ -389,6 +471,8 @@ app.get('/word-for-interval', async (req, res) => {
                 meaning = wordData.definition || "Definition not found";
                 arabic = wordData.arabic || "";
             }
+        } else {
+            console.error('Word not found in glossary:', wordForInterval.word);
         }
         
         res.json({ 
@@ -401,7 +485,13 @@ app.get('/word-for-interval', async (req, res) => {
         });
     } catch (error) {
         console.error('Error in word-for-interval:', error);
-        res.status(500).json({ status: 'error', error: 'Failed to retrieve word' });
+        console.error('Error details:', error.message);
+        
+        res.status(500).json({ 
+            status: 'error', 
+            error: 'Failed to retrieve word', 
+            message: error.message 
+        });
     }
 });
 
@@ -572,6 +662,33 @@ app.get('/achievements', async (req, res) => {
     } catch (error) {
         res.json({ status: 'error', error: 'Failed to fetch achievements' });
     }
+});
+
+// Add a simple health check endpoint
+app.get('/health', (req, res) => {
+    const healthCheck = {
+        status: 'ok',
+        uptime: process.uptime(),
+        timestamp: Date.now(),
+        mongoStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        glossaryLoaded: Object.keys(glossary).length > 0,
+        environment: process.env.NODE_ENV || 'development'
+    };
+    
+    res.json(healthCheck);
+});
+
+// Add error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Server error:', err);
+    console.error('Error details:', err.message);
+    console.error('Stack trace:', err.stack);
+    
+    res.status(500).json({
+        status: 'error',
+        error: 'Internal server error',
+        message: err.message
+    });
 });
 
 // Start the server
