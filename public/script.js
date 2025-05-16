@@ -456,83 +456,111 @@ document.addEventListener('DOMContentLoaded', () => {
             
             container.appendChild(card);
         });
-    }    // Start the countdown timer for the next word
-    function startCountdown() {
-        function updateCountdown() {
-            const now = new Date();
-            const utcHour = now.getUTCHours();
-            const cdtHour = (utcHour - 5 + 24) % 24; // Convert to CDT
-            const nextWordTime = new Date(now);
-
-            // Always reset minutes, seconds, and milliseconds
-            nextWordTime.setMinutes(0, 0, 0);
-            nextWordTime.setMilliseconds(0);
-
-            // Calculate next update time based on current CDT time
-            if (cdtHour >= 20) {
-                // After 8 PM, next word is at 6 AM tomorrow
-                nextWordTime.setDate(nextWordTime.getDate() + 1);
-                nextWordTime.setUTCHours(11); // 6 AM CDT
-            } else if (cdtHour < 6) {
-                // Between midnight and 6 AM, next word is at 6 AM today
-                nextWordTime.setUTCHours(11); // 6 AM CDT
-            } else if (cdtHour < 15) {
-                // Between 6 AM and 3 PM, next word is at 3 PM today
-                nextWordTime.setUTCHours(20); // 3 PM CDT
-            } else {
-                // Between 3 PM and 8 PM, next word is at 8 PM today
-                nextWordTime.setUTCHours(1); // 8 PM CDT
-                if (utcHour < 1) {
-                    nextWordTime.setDate(nextWordTime.getDate() + 1);
+    }    // Fetch the next word time from server and calculate countdown
+    async function startCountdown() {
+        async function updateCountdown() {
+            try {
+                const now = new Date();
+                let nextWordTime = null;
+                
+                // Try to get the next word time from server
+                const token = localStorage.getItem('token');
+                if (token) {
+                    try {
+                        const response = await fetch(`${baseURL}/word-for-interval`, {
+                            method: 'GET',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-access-token': token,
+                                'Cache-Control': 'no-cache'
+                            }
+                        });
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data.nextUpdate) {
+                                nextWordTime = new Date(data.nextUpdate);
+                                console.log("Next update time from server:", nextWordTime);
+                            }
+                        }
+                    } catch (error) {
+                        console.error("Error fetching next update time:", error);
+                    }
                 }
-            }
+                
+                // If we couldn't get the time from the server, calculate it locally
+                if (!nextWordTime) {
+                    const utcHour = now.getUTCHours();
+                    const cdtHour = (utcHour - 5 + 24) % 24; // Convert to CDT
+                    nextWordTime = new Date(now);
+                    
+                    // Reset minutes and seconds to 0 for clean intervals
+                    nextWordTime.setMinutes(0, 0, 0);
 
-            const remainingTime = nextWordTime - now;
-            
-            // Ensure we don't show negative time
-            if (remainingTime < 0) {
+                    if (cdtHour >= 20) {
+                        // Night period (8 PM - 6 AM), next is tomorrow 6 AM
+                        nextWordTime.setUTCHours(11); // 6 AM CDT tomorrow
+                        nextWordTime.setDate(nextWordTime.getDate() + 1);
+                    } else if (cdtHour < 6) {
+                        // Night period (8 PM - 6 AM), next is 6 AM today
+                        nextWordTime.setUTCHours(11); // 6 AM CDT today
+                    } else if (cdtHour < 15) {
+                        // Morning period (6 AM - 3 PM), next is 3 PM today
+                        nextWordTime.setUTCHours(20); // 3 PM CDT today
+                    } else {
+                        // Afternoon period (3 PM - 8 PM), next is 8 PM today
+                        nextWordTime.setUTCHours(1); // 8 PM CDT today
+                        if (utcHour < 1) { // If we're before the UTC cutoff
+                            nextWordTime.setDate(nextWordTime.getDate() + 1);
+                        }
+                    }
+                    console.log("Next update time calculated locally:", nextWordTime);
+                }
+
+                const remainingTime = nextWordTime - now;
+                
+                if (remainingTime <= 0) {
+                    showNotification("It's time for a new word!");
+                    
+                    // Reload after a short delay to prevent multiple reloads
+                    setTimeout(() => {
+                        fetchRandomWordForInterval()
+                            .then(() => {
+                                checkIfCanCheckIn();
+                                // Start a new countdown but wait a bit to avoid race conditions
+                                setTimeout(startCountdown, 1000);
+                            })
+                            .catch(error => {
+                                console.error('Failed to fetch new word:', error);
+                                showNotification('Failed to load the next word. Retrying in 10 seconds...', 'error');
+                                // Try again after 10 seconds if it fails
+                                setTimeout(() => {
+                                    fetchRandomWordForInterval();
+                                    checkIfCanCheckIn();
+                                    startCountdown();
+                                }, 10000);
+                            });
+                    }, 1000);
+                    return;
+                }
+
+                const hours = Math.floor(remainingTime / (1000 * 60 * 60));
+                const minutes = Math.floor((remainingTime % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((remainingTime % (1000 * 60)) / 1000);
+
                 document.getElementById('next-word-timer').innerHTML = 
-                    '<i class="fas fa-hourglass-half"></i> Loading next word...';
-                fetchRandomWordForInterval()
-                    .then(() => {
-                        checkIfCanCheckIn();
-                        startCountdown();
-                    })
-                    .catch(error => {
-                        console.error('Failed to fetch new word:', error);
-                        showNotification('Failed to load the next word. Retrying in 10 seconds...', 'error');
-                        setTimeout(() => {
-                            fetchRandomWordForInterval();
-                            checkIfCanCheckIn();
-                            startCountdown();
-                        }, 10000);
-                    });
-                return;
+                    `<i class="fas fa-hourglass-half"></i> Time until next word: 
+                    <span class="countdown">${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}</span>`;
+            } catch (error) {
+                console.error("Error in countdown calculation:", error);
             }
-
-            const hours = Math.floor(remainingTime / (1000 * 60 * 60));
-            const minutes = Math.floor((remainingTime % (1000 * 60 * 60)) / (1000 * 60));
-            const seconds = Math.floor((remainingTime % (1000 * 60)) / 1000);
-
-            const currentPeriod = getCurrentPeriod();
-            const nextPeriod = 
-                currentPeriod === 'morning' ? 'afternoon (3:00 PM CDT)' :
-                currentPeriod === 'afternoon' ? 'night (8:00 PM CDT)' :
-                'morning (6:00 AM CDT)';
-
-            document.getElementById('next-word-timer').innerHTML = 
-                `<i class="fas fa-hourglass-half"></i> Next word in ${nextPeriod}: 
-                <span class="countdown">${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}</span>`;
         }
 
-        // Clear any existing interval
-        if (window.timerInterval) {
-            clearInterval(window.timerInterval);
-        }
-
-        // Start the countdown immediately and update every second
-        updateCountdown();
-        window.timerInterval = setInterval(updateCountdown, 1000);
+        // Initial update
+        await updateCountdown();
+        
+        // Then update every minute instead of every second to reduce load
+        return setInterval(updateCountdown, 60000);
     }
 
     // About modal functionality
