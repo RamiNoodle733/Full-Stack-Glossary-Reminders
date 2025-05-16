@@ -559,11 +559,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const hours = Math.floor(remainingTime / (1000 * 60 * 60));
                 const minutes = Math.floor((remainingTime % (1000 * 60 * 60)) / (1000 * 60));
-                const seconds = Math.floor((remainingTime % (1000 * 60)) / 1000);
-
-                document.getElementById('next-word-timer').innerHTML = 
-                    `<i class="fas fa-hourglass-half"></i> Time until next word: 
-                    <span class="countdown">${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}</span>`;
+                const seconds = Math.floor((remainingTime % (1000 * 60)) / 1000);                document.getElementById('next-word-timer').innerHTML = 
+                    `<span class="countdown">${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}</span>`;
             } catch (error) {
                 console.error("Error in display update:", error);
             }
