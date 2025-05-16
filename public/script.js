@@ -110,9 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Signup error:', error);
             showNotification('Connection error. Please try again.', 'error');
         }
-    });
-
-    // Show the glossary section after login
+    });    // Show the glossary section after login
     async function showGlossarySection() {
         loginSection.style.display = 'none';
         signupSection.style.display = 'none';
@@ -153,9 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('total-points').textContent = data.points.toFixed(1);
         document.getElementById('current-streak').textContent = data.streak;
         document.getElementById('current-multiplier').textContent = data.multiplier.toFixed(1);
-    }
-
-    // Helper function to check server health
+    }    // Helper function to check server health
     async function checkServerHealth() {
         try {
             const response = await fetch(`${baseURL}/health`);
@@ -170,8 +166,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return null;
         }
     }
-
-    // Fetch and display the current word from the server
+      // Fetch and display the current word from the server
     async function fetchRandomWordForInterval() {
         document.getElementById('glossary-word').innerHTML = `
             <div class="loading-container">
@@ -276,9 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
             `;
         }
-    }
-
-    // Check if the user can check in
+    }    // Check if the user can check in
     async function checkIfCanCheckIn() {
         const token = localStorage.getItem('token');
         if (!token) {
@@ -373,8 +366,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
             });
 
-            const data = await response.json();
-            if (data.status === 'ok') {
+            const data = await response.json();            if (data.status === 'ok') {
                 showNotification(`Knowledge points updated! +${data.pointsEarned} points!`, 'success');
                 checkInButton.classList.add('disabled');
                 checkInButton.disabled = true;
@@ -464,91 +456,57 @@ document.addEventListener('DOMContentLoaded', () => {
             
             container.appendChild(card);
         });
-    }
-
-    // Get the current period based on CDT time
-    function getCurrentPeriod() {
-        const now = new Date();
-        const utcHour = now.getUTCHours();
-        const cdtHour = (utcHour - 5 + 24) % 24; // Convert to CDT
-
-        // Define check-in periods in CDT
-        if (cdtHour >= 20 || cdtHour < 6) {
-            return 'night'; // 8:00 PM - 6:00 AM
-        } else if (cdtHour >= 6 && cdtHour < 15) {
-            return 'morning'; // 6:00 AM - 3:00 PM
-        } else {
-            return 'afternoon'; // 3:00 PM - 8:00 PM
-        }
-    }
-
-    // Start the countdown timer for the next word
+    }    // Start the countdown timer for the next word
     function startCountdown() {
         function updateCountdown() {
             const now = new Date();
-            
-            // Clear any existing interval and fetch a new word if it's time
-            if (window.timerInterval) {
-                const lastUpdate = parseInt(localStorage.getItem('lastTimerUpdate') || '0');
-                const currentTime = now.getTime();
-                if (currentTime - lastUpdate > 3600000) { // More than an hour has passed
-                    clearInterval(window.timerInterval);
-                    fetchRandomWordForInterval();
-                    checkIfCanCheckIn();
-                    localStorage.setItem('lastTimerUpdate', currentTime.toString());
-                }
-            }
-
             const utcHour = now.getUTCHours();
             const cdtHour = (utcHour - 5 + 24) % 24; // Convert to CDT
             const nextWordTime = new Date(now);
 
-            // Always set minutes and seconds to 0 for clean intervals
+            // Always reset minutes, seconds, and milliseconds
             nextWordTime.setMinutes(0, 0, 0);
-            nextWordTime.setSeconds(0);
             nextWordTime.setMilliseconds(0);
 
             // Calculate next update time based on current CDT time
-            if (cdtHour >= 20 || cdtHour < 6) {
-                // Currently in night period (8 PM - 6 AM)
-                if (cdtHour >= 20) {
-                    // If after 8 PM, next period is 6 AM tomorrow
-                    nextWordTime.setDate(nextWordTime.getDate() + 1);
-                }
+            if (cdtHour >= 20) {
+                // After 8 PM, next word is at 6 AM tomorrow
+                nextWordTime.setDate(nextWordTime.getDate() + 1);
                 nextWordTime.setUTCHours(11); // 6 AM CDT
-            } else if (cdtHour >= 6 && cdtHour < 15) {
-                // Currently in morning period (6 AM - 3 PM)
+            } else if (cdtHour < 6) {
+                // Between midnight and 6 AM, next word is at 6 AM today
+                nextWordTime.setUTCHours(11); // 6 AM CDT
+            } else if (cdtHour < 15) {
+                // Between 6 AM and 3 PM, next word is at 3 PM today
                 nextWordTime.setUTCHours(20); // 3 PM CDT
             } else {
-                // Currently in afternoon period (3 PM - 8 PM)
+                // Between 3 PM and 8 PM, next word is at 8 PM today
                 nextWordTime.setUTCHours(1); // 8 PM CDT
-                if (utcHour < 1) { // If we're before 8 PM CDT
+                if (utcHour < 1) {
                     nextWordTime.setDate(nextWordTime.getDate() + 1);
                 }
             }
 
             const remainingTime = nextWordTime - now;
-
+            
             // Ensure we don't show negative time
             if (remainingTime < 0) {
                 document.getElementById('next-word-timer').innerHTML = 
                     '<i class="fas fa-hourglass-half"></i> Loading next word...';
-                setTimeout(() => {
-                    fetchRandomWordForInterval()
-                        .then(() => {
+                fetchRandomWordForInterval()
+                    .then(() => {
+                        checkIfCanCheckIn();
+                        startCountdown();
+                    })
+                    .catch(error => {
+                        console.error('Failed to fetch new word:', error);
+                        showNotification('Failed to load the next word. Retrying in 10 seconds...', 'error');
+                        setTimeout(() => {
+                            fetchRandomWordForInterval();
                             checkIfCanCheckIn();
                             startCountdown();
-                        })
-                        .catch(error => {
-                            console.error('Failed to fetch new word:', error);
-                            showNotification('Failed to load the next word. Retrying in 10 seconds...', 'error');
-                            setTimeout(() => {
-                                fetchRandomWordForInterval();
-                                checkIfCanCheckIn();
-                                startCountdown();
-                            }, 10000);
-                        });
-                }, 1000);
+                        }, 10000);
+                    });
                 return;
             }
 
@@ -557,11 +515,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const seconds = Math.floor((remainingTime % (1000 * 60)) / 1000);
 
             const currentPeriod = getCurrentPeriod();
-            const nextPeriod = hours >= 0 ? (
+            const nextPeriod = 
                 currentPeriod === 'morning' ? 'afternoon (3:00 PM CDT)' :
                 currentPeriod === 'afternoon' ? 'night (8:00 PM CDT)' :
-                'morning (6:00 AM CDT)'
-            ) : '';
+                'morning (6:00 AM CDT)';
 
             document.getElementById('next-word-timer').innerHTML = 
                 `<i class="fas fa-hourglass-half"></i> Next word in ${nextPeriod}: 
@@ -576,7 +533,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // Start the countdown immediately and update every second
         updateCountdown();
         window.timerInterval = setInterval(updateCountdown, 1000);
-        localStorage.setItem('lastTimerUpdate', new Date().getTime().toString());
     }
 
     // About modal functionality

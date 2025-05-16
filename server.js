@@ -251,16 +251,19 @@ function getPeriodTimes(period = getCurrentPeriod()) {
     const endTime = new Date(now);
     const utcHour = now.getUTCHours();
     
+    // Reset minutes and seconds for clean boundaries
+    startTime.setMinutes(0, 0, 0);
+    endTime.setMinutes(0, 0, 0);
+    
     // Set to current day's respective period times
     switch (period) {
         case 'night':
+            // Night period (8 PM - 6 AM)
             if (utcHour < 11) { // Before 6 AM CDT
-                // Night period from previous day
                 startTime.setDate(startTime.getDate() - 1);
                 startTime.setUTCHours(1, 0, 0, 0); // 8 PM CDT previous day
                 endTime.setUTCHours(11, 0, 0, 0); // 6 AM CDT today
             } else {
-                // Night period starts today
                 startTime.setUTCHours(1, 0, 0, 0); // 8 PM CDT today
                 endTime.setDate(endTime.getDate() + 1);
                 endTime.setUTCHours(11, 0, 0, 0); // 6 AM CDT tomorrow
