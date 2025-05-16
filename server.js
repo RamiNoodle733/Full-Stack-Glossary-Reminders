@@ -317,13 +317,12 @@ async function getWordForCurrentPeriod() {
         const dateSeed = startTime.getFullYear() * 10000 + 
                         (startTime.getMonth() + 1) * 100 + // Adding 1 to month since it's 0-based
                         startTime.getDate() +
-                        (currentPeriod === 'morning' ? 1 : currentPeriod === 'afternoon' ? 2 : 3); // Add period modifier
-
-        // Get all available words and sort them for consistency
-        const allWords = Object.keys(glossary).sort();
+                        (currentPeriod === 'morning' ? 1 : currentPeriod === 'afternoon' ? 2 : 3); // Add period modifier        // Get all available words
+        const allWords = Object.keys(glossary);
         
-        // Use a deterministic way to select the word based on the date seed
-        const selectedIndex = Math.abs(dateSeed) % allWords.length;
+        // Use a more random but still deterministic selection algorithm
+        const hash = (dateSeed * 2654435761) % 2**32; // Use multiplicative hash
+        const selectedIndex = hash % allWords.length;
         const selectedWord = allWords[selectedIndex];
         
         console.log(`Selected new word (seed: ${dateSeed}, index: ${selectedIndex}): ${selectedWord}`);
