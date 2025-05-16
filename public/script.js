@@ -458,68 +458,81 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }    // Fetch the next word time from server and calculate countdown
     async function startCountdown() {
-        async function updateCountdown() {
+        let nextWordTime = null;
+        let timerId = null;
+        let serverCheckTimer = null;
+
+        async function fetchNextWordTime() {
+            const now = new Date();
+            
+            // Try to get the next word time from server
+            const token = localStorage.getItem('token');
+            if (!token) return;
+
             try {
+                const response = await fetch(`${baseURL}/word-for-interval`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-access-token': token,
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.nextUpdate) {
+                        nextWordTime = new Date(data.nextUpdate);
+                        console.log("Next update time from server:", nextWordTime);
+                        return;
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching next update time:", error);
+            }
+
+            // If we couldn't get the time from the server, calculate it locally
+            const utcHour = now.getUTCHours();
+            const cdtHour = (utcHour - 5 + 24) % 24; // Convert to CDT
+            nextWordTime = new Date(now);
+            
+            // Reset minutes and seconds to 0 for clean intervals
+            nextWordTime.setMinutes(0, 0, 0);
+
+            if (cdtHour >= 20) {
+                // Night period (8 PM - 6 AM), next is tomorrow 6 AM
+                nextWordTime.setUTCHours(11); // 6 AM CDT tomorrow
+                nextWordTime.setDate(nextWordTime.getDate() + 1);
+            } else if (cdtHour < 6) {
+                // Night period (8 PM - 6 AM), next is 6 AM today
+                nextWordTime.setUTCHours(11); // 6 AM CDT today
+            } else if (cdtHour < 15) {
+                // Morning period (6 AM - 3 PM), next is 3 PM today
+                nextWordTime.setUTCHours(20); // 3 PM CDT today
+            } else {
+                // Afternoon period (3 PM - 8 PM), next is 8 PM today
+                nextWordTime.setUTCHours(1); // 8 PM CDT today
+                if (utcHour < 1) { // If we're before the UTC cutoff
+                    nextWordTime.setDate(nextWordTime.getDate() + 1);
+                }
+            }
+            console.log("Next update time calculated locally:", nextWordTime);
+        }
+
+        function updateDisplay() {
+            try {
+                if (!nextWordTime) return;
+                
                 const now = new Date();
-                let nextWordTime = null;
-                
-                // Try to get the next word time from server
-                const token = localStorage.getItem('token');
-                if (token) {
-                    try {
-                        const response = await fetch(`${baseURL}/word-for-interval`, {
-                            method: 'GET',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'x-access-token': token,
-                                'Cache-Control': 'no-cache'
-                            }
-                        });
-                        
-                        if (response.ok) {
-                            const data = await response.json();
-                            if (data.nextUpdate) {
-                                nextWordTime = new Date(data.nextUpdate);
-                                console.log("Next update time from server:", nextWordTime);
-                            }
-                        }
-                    } catch (error) {
-                        console.error("Error fetching next update time:", error);
-                    }
-                }
-                
-                // If we couldn't get the time from the server, calculate it locally
-                if (!nextWordTime) {
-                    const utcHour = now.getUTCHours();
-                    const cdtHour = (utcHour - 5 + 24) % 24; // Convert to CDT
-                    nextWordTime = new Date(now);
-                    
-                    // Reset minutes and seconds to 0 for clean intervals
-                    nextWordTime.setMinutes(0, 0, 0);
-
-                    if (cdtHour >= 20) {
-                        // Night period (8 PM - 6 AM), next is tomorrow 6 AM
-                        nextWordTime.setUTCHours(11); // 6 AM CDT tomorrow
-                        nextWordTime.setDate(nextWordTime.getDate() + 1);
-                    } else if (cdtHour < 6) {
-                        // Night period (8 PM - 6 AM), next is 6 AM today
-                        nextWordTime.setUTCHours(11); // 6 AM CDT today
-                    } else if (cdtHour < 15) {
-                        // Morning period (6 AM - 3 PM), next is 3 PM today
-                        nextWordTime.setUTCHours(20); // 3 PM CDT today
-                    } else {
-                        // Afternoon period (3 PM - 8 PM), next is 8 PM today
-                        nextWordTime.setUTCHours(1); // 8 PM CDT today
-                        if (utcHour < 1) { // If we're before the UTC cutoff
-                            nextWordTime.setDate(nextWordTime.getDate() + 1);
-                        }
-                    }
-                    console.log("Next update time calculated locally:", nextWordTime);
-                }
-
                 const remainingTime = nextWordTime - now;
                 
                 if (remainingTime <= 0) {
+                    if (timerId) {
+                        clearInterval(timerId);
+                    }
+                    if (serverCheckTimer) {
+                        clearInterval(serverCheckTimer);
+                    }
                     showNotification("It's time for a new word!");
                     
                     // Reload after a short delay to prevent multiple reloads
@@ -552,15 +565,33 @@ document.addEventListener('DOMContentLoaded', () => {
                     `<i class="fas fa-hourglass-half"></i> Time until next word: 
                     <span class="countdown">${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}</span>`;
             } catch (error) {
-                console.error("Error in countdown calculation:", error);
+                console.error("Error in display update:", error);
             }
         }
 
-        // Initial update
-        await updateCountdown();
+        // Initialize
+        await fetchNextWordTime();
+
+        // Clear any existing intervals
+        if (timerId) {
+            clearInterval(timerId);
+        }
+        if (serverCheckTimer) {
+            clearInterval(serverCheckTimer);
+        }
+
+        // Update display immediately
+        updateDisplay();
+
+        // Set up one minute interval for fetching new time from server
+        serverCheckTimer = setInterval(async () => {
+            await fetchNextWordTime();
+        }, 60000);
         
-        // Then update every minute instead of every second to reduce load
-        return setInterval(updateCountdown, 60000);
+        // Set up one second interval for updating display
+        timerId = setInterval(updateDisplay, 1000);
+        
+        return timerId;
     }
 
     // About modal functionality
