@@ -464,24 +464,30 @@ document.addEventListener('DOMContentLoaded', () => {
             const cdtHour = (utcHour - 5 + 24) % 24; // Convert to CDT
             const nextWordTime = new Date(now);
 
+            // Always set minutes and seconds to 0 for clean intervals
+            nextWordTime.setMinutes(0, 0, 0);
+
             // Calculate next update time based on current CDT time
             if (cdtHour >= 20) {
-                // Night period after 8 PM, next is tomorrow 6 AM
-                nextWordTime.setUTCHours(11, 0, 0, 0); // 6 AM CDT tomorrow
+                // Night period (8 PM - 6 AM), next is tomorrow 6 AM
+                nextWordTime.setUTCHours(11); // 6 AM CDT tomorrow
                 nextWordTime.setDate(nextWordTime.getDate() + 1);
             } else if (cdtHour < 6) {
-                // Night period before 6 AM, next is 6 AM today
-                nextWordTime.setUTCHours(11, 0, 0, 0); // 6 AM CDT today
+                // Night period (8 PM - 6 AM), next is 6 AM today
+                nextWordTime.setUTCHours(11); // 6 AM CDT today
             } else if (cdtHour < 15) {
-                // Morning period (6 AM - 3 PM), next is 3 PM
-                nextWordTime.setUTCHours(20, 0, 0, 0); // 3 PM CDT
+                // Morning period (6 AM - 3 PM), next is 3 PM today
+                nextWordTime.setUTCHours(20); // 3 PM CDT today
             } else {
-                // Afternoon period (3 PM - 8 PM), next is 8 PM
-                nextWordTime.setUTCHours(1, 0, 0, 0); // 8 PM CDT
-                nextWordTime.setDate(nextWordTime.getDate() + 1);
+                // Afternoon period (3 PM - 8 PM), next is 8 PM today
+                nextWordTime.setUTCHours(1); // 8 PM CDT today
+                if (utcHour < 1) { // If we're before the UTC cutoff
+                    nextWordTime.setDate(nextWordTime.getDate() + 1);
+                }
             }
 
-            const remainingTime = nextWordTime - now;            // If it's time for the next word
+            const remainingTime = nextWordTime - now;
+
             if (remainingTime <= 0) {
                 clearInterval(timerInterval);
                 showNotification("It's time for a new word!");
@@ -517,6 +523,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span class="countdown">${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}</span>`;
         }
 
+        // Start the countdown immediately and update every second
         updateCountdown();
         const timerInterval = setInterval(updateCountdown, 1000);
     }
