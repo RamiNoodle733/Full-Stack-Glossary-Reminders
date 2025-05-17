@@ -17,7 +17,8 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.5.2"
+    "mongoose": "^8.5.2",
+    "rate-limiter-flexible": "^7.1.0"
   },
   "devDependencies": {
     "mongodb-memory-server": "^10.1.4",

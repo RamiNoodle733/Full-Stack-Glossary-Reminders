@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { RateLimiterMemory } = require('rate-limiter-flexible');
 require('dotenv').config(); // Load environment variables
 
 // For in-memory MongoDB when testing locally
@@ -18,6 +19,55 @@ app.use(cors({
     credentials: true
 }));
 app.use(express.json());
+
+// Set up rate limiters
+const authRateLimiter = new RateLimiterMemory({
+    points: 5, // 5 attempts
+    duration: 60, // per 1 minute
+});
+
+const apiRateLimiter = new RateLimiterMemory({
+    points: 30, // 30 requests
+    duration: 60, // per 1 minute
+});
+
+// Middleware function for rate limiting auth endpoints
+const rateLimitAuth = async (req, res, next) => {
+    try {
+        const clientIp = req.ip;
+        await authRateLimiter.consume(clientIp);
+        next();
+    } catch (error) {
+        res.status(429).json({
+            status: 'error',
+            error: 'Too many login attempts, please try again later'
+        });
+    }
+};
+
+// Middleware function for rate limiting API endpoints
+const rateLimitApi = async (req, res, next) => {
+    try {
+        // Use combination of IP and user token if available
+        let identifier = req.ip;
+        const token = req.headers['x-access-token'];
+        if (token) {
+            try {
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                identifier = `${req.ip}_${decoded.username}`;
+            } catch (err) {
+                // If token is invalid, just use IP
+            }
+        }
+        await apiRateLimiter.consume(identifier);
+        next();
+    } catch (error) {
+        res.status(429).json({
+            status: 'error',
+            error: 'Too many requests, please try again later'
+        });
+    }
+};
 
 // Connect to MongoDB - either local, Atlas, or in-memory
 async function connectToDatabase() {
@@ -383,8 +433,24 @@ async function getWordForCurrentPeriod() {
 }
 
 // Signup route
-app.post('/signup', async (req, res) => {
+app.post('/signup', rateLimitAuth, async (req, res) => {
     const { username, password } = req.body;
+    
+    // Input validation
+    if (!username || !password) {
+        return res.status(400).json({ status: 'error', error: 'Username and password are required' });
+    }
+    
+    // Sanitize username (allow only alphanumeric characters, underscores, and hyphens)
+    if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+        return res.status(400).json({ status: 'error', error: 'Username can only contain letters, numbers, underscores, and hyphens' });
+    }
+    
+    // Password strength check
+    if (password.length < 8) {
+        return res.status(400).json({ status: 'error', error: 'Password must be at least 8 characters long' });
+    }
+    
     const hashedPassword = await bcrypt.hash(password, 10);
     try {
         const user = await User.create({ username, password: hashedPassword });
@@ -395,15 +461,26 @@ app.post('/signup', async (req, res) => {
 });
 
 // Login route
-app.post('/login', async (req, res) => {
+app.post('/login', rateLimitAuth, async (req, res) => {
     const { username, password } = req.body;
+    
+    // Input validation
+    if (!username || !password) {
+        return res.status(400).json({ status: 'error', error: 'Username and password are required' });
+    }
+    
+    // Sanitize username (allow only alphanumeric characters, underscores, and hyphens)
+    if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+        return res.status(400).json({ status: 'error', error: 'Invalid username format' });
+    }
+    
     const user = await User.findOne({ username });
     if (!user) {
         return res.json({ status: 'error', error: 'Invalid login' });
     }
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (isPasswordValid) {
-        const token = jwt.sign({ username: user.username }, 'secret123');
+        const token = jwt.sign({ username: user.username }, process.env.JWT_SECRET);
         return res.json({ status: 'ok', token });
     } else {
         return res.json({ status: 'error', error: 'Invalid login' });
@@ -411,12 +488,27 @@ app.post('/login', async (req, res) => {
 });
 
 // Update knowledge points route
-app.post('/update-points', async (req, res) => {
+app.post('/update-points', rateLimitApi, async (req, res) => {
     const token = req.headers['x-access-token'];
+    
+    // Validate token
+    if (!token) {
+        return res.status(401).json({ status: 'error', error: 'No token provided' });
+    }
+    
     try {
-        const decoded = jwt.verify(token, 'secret123');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // Validate username from token
         const username = decoded.username;
+        if (!username || typeof username !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(username)) {
+            return res.status(401).json({ status: 'error', error: 'Invalid token' });
+        }
+        
         const user = await User.findOne({ username });
+        if (!user) {
+            return res.status(404).json({ status: 'error', error: 'User not found' });
+        }
 
         const currentPeriod = getCurrentPeriod();
         const { startTime, endTime } = getPeriodTimes(currentPeriod);
@@ -566,19 +658,36 @@ app.post('/update-points', async (req, res) => {
 });
 
 // Get user stats route
-app.get('/user-stats', async (req, res) => {
+app.get('/user-stats', rateLimitApi, async (req, res) => {
     const token = req.headers['x-access-token'];
+    
+    // Validate token
+    if (!token) {
+        return res.status(401).json({ status: 'error', error: 'No token provided' });
+    }
+    
     try {
-        const decoded = jwt.verify(token, 'secret123');
-        const user = await User.findOne({ username: decoded.username });
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // Validate username from token
+        const username = decoded.username;
+        if (!username || typeof username !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(username)) {
+            return res.status(401).json({ status: 'error', error: 'Invalid token' });
+        }
+        
+        const user = await User.findOne({ username });
+        if (!user) {
+            return res.status(404).json({ status: 'error', error: 'User not found' });
+        }
+        
         res.json({ status: 'ok', points: user.knowledgePoints, streak: user.streak, multiplier: user.multiplier });
     } catch (error) {
-        res.json({ status: 'error', error: 'Failed to fetch stats' });
+        res.status(401).json({ status: 'error', error: 'Failed to fetch stats' });
     }
 });
 
 // Fetch or generate word for interval route
-app.get('/word-for-interval', async (req, res) => {
+app.get('/word-for-interval', rateLimitApi, async (req, res) => {
     try {
         // Check if glossary is loaded properly
         if (!glossary || Object.keys(glossary).length === 0) {
@@ -716,7 +825,7 @@ app.get('/word-for-interval', async (req, res) => {
 });
 
 // Leaderboard route
-app.get('/leaderboard', async (req, res) => {
+app.get('/leaderboard', rateLimitApi, async (req, res) => {
     try {
         const users = await User.find().sort({ knowledgePoints: -1 }).limit(10); // Top 10 users
         res.json({ status: 'ok', users });
@@ -726,7 +835,7 @@ app.get('/leaderboard', async (req, res) => {
 });
 
 // Check if user can check in
-app.get('/can-check-in', async (req, res) => {
+app.get('/can-check-in', rateLimitApi, async (req, res) => {
     const token = req.headers['x-access-token'];
     try {
         if (!token) {
@@ -738,7 +847,7 @@ app.get('/can-check-in', async (req, res) => {
         
         let decoded;
         try {
-            decoded = jwt.verify(token, 'secret123');
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
         } catch (tokenError) {
             console.error('Token verification error:', tokenError.message);
             return res.status(401).json({
@@ -747,7 +856,12 @@ app.get('/can-check-in', async (req, res) => {
             });
         }
         
+        // Validate username from token
         const username = decoded.username;
+        if (!username || typeof username !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(username)) {
+            return res.status(401).json({ status: 'error', error: 'Invalid token' });
+        }
+        
         const user = await User.findOne({ username });
 
         if (!user) {
@@ -825,14 +939,20 @@ app.get('/can-check-in', async (req, res) => {
 });
 
 // Word history route
-app.get('/word-history', async (req, res) => {
+app.get('/word-history', rateLimitApi, async (req, res) => {
     try {
         const token = req.headers['x-access-token'];
         if (!token) {
             return res.status(401).json({ status: 'error', error: 'No token provided' });
         }
         
-        const decoded = jwt.verify(token, 'secret123');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // Validate username from token
+        const username = decoded.username;
+        if (!username || typeof username !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(username)) {
+            return res.status(401).json({ status: 'error', error: 'Invalid token' });
+        }
         
         // Find recent words (last 10)
         const recentWords = await Word.find({})
@@ -855,11 +975,27 @@ app.get('/word-history', async (req, res) => {
 });
 
 // Get user achievements
-app.get('/achievements', async (req, res) => {
+app.get('/achievements', rateLimitApi, async (req, res) => {
     const token = req.headers['x-access-token'];
+    
+    // Validate token
+    if (!token) {
+        return res.status(401).json({ status: 'error', error: 'No token provided' });
+    }
+    
     try {
-        const decoded = jwt.verify(token, 'secret123');
-        const user = await User.findOne({ username: decoded.username });
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // Validate username from token
+        const username = decoded.username;
+        if (!username || typeof username !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(username)) {
+            return res.status(401).json({ status: 'error', error: 'Invalid token' });
+        }
+        
+        const user = await User.findOne({ username });
+        if (!user) {
+            return res.status(404).json({ status: 'error', error: 'User not found' });
+        }
         
         const achievements = {
             firstCheckIn: {
