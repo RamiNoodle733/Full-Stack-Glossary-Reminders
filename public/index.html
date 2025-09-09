@@ -64,12 +64,48 @@
                 <button id="check-in-button"><i class="fas fa-check-circle"></i> Check In</button>
             </div>
             
-            <div class="stats">
-                <p><i class="fas fa-brain"></i> KNOWLEDGE POINTS: <span id="total-points">0</span></p>
-                <p><i class="fas fa-fire"></i> Current Streak: <span id="current-streak">0</span></p>
-                <p><i class="fas fa-bolt"></i> Multiplier: <span id="current-multiplier">1</span></p>
+            <!-- Enhanced Stats Dashboard -->
+            <div class="stats-dashboard">
+                <div class="stat-card knowledge-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-brain"></i>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-label">Knowledge Points</div>
+                        <div class="stat-value" id="total-points">0</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card streak-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-fire"></i>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-label">Current Streak</div>
+                        <div class="stat-value" id="current-streak">0</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card multiplier-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-bolt"></i>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-label">Multiplier</div>
+                        <div class="stat-value" id="current-multiplier">1</div>
+                    </div>
+                </div>
             </div>
-              <p class="timer">Next Word: <span id="next-word-timer">0:00:00</span></p>
+            
+            <div class="timer-card">
+                <div class="timer-icon">
+                    <i class="fas fa-clock"></i>
+                </div>
+                <div class="timer-content">
+                    <div class="timer-label">Next Word Available In</div>
+                    <div class="timer-value" id="next-word-timer">0:00:00</div>
+                </div>
+            </div>
 
             <!-- Perfume Banner Ad -->
             <div class="perfume-banner-ad">
