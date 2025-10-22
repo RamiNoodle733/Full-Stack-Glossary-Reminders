@@ -25,3 +25,4 @@ Abu Huraira reported: The Messenger of Allah ﷺ, peace and blessings be upon hi
 Whoever travels a path in search of knowledge, Allah will make easy for him a path to Paradise. People do not gather in the houses of Allah, reciting the book of Allah and studying it together, but that tranquility will descend upon them, mercy will cover them, angels will surround them, and Allah will mention them to those near him.
 
 Source: Ṣaḥīḥ Muslim 2699, Grade: Sahih
+
